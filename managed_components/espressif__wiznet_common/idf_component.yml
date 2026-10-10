@@ -1,0 +1,9 @@
+dependencies:
+  idf: '>=5.3'
+description: Common code for WIZnet Ethernet controllers (W5500, W6100)
+repository: git://github.com/espressif/esp-eth-drivers.git
+repository_info:
+  commit_sha: 281122186d5002db72dc84ac12d0698a2a5589f6
+  path: wiznet_common
+url: https://github.com/espressif/esp-eth-drivers/tree/master/wiznet_common
+version: 1.0.0

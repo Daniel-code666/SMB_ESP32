@@ -1,0 +1,16 @@
+dependencies:
+  espressif/wiznet_common:
+    require: public
+    version: ^1.0.0
+  idf: '>=6.0'
+description: W5500 Ethernet Driver
+files:
+  exclude:
+  - test_apps/**/*
+  - .build-test-rules.yml
+repository: git://github.com/espressif/esp-eth-drivers.git
+repository_info:
+  commit_sha: cf3f26145293c403322b9e78ca202f6806bce7ab
+  path: w5500
+url: https://github.com/espressif/esp-eth-drivers/tree/master/w5500
+version: 2.0.0
