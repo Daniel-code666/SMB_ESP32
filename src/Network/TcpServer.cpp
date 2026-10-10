@@ -1,4 +1,5 @@
 #include "TcpServer.h"
+#include "Diagnostics/TraceBuffer.h"
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
@@ -339,6 +340,18 @@ namespace
         {
             return Command::Bench;
         }
+        if (strcmp(request, NetworkConstants::Tcp::Protocol::TRACE_INFO_COMMAND) == 0)
+        {
+            return Command::TraceInfo;
+        }
+        if (strcmp(request, NetworkConstants::Tcp::Protocol::TRACE_DOWNLOAD_COMMAND) == 0)
+        {
+            return Command::TraceDownload;
+        }
+        if (strcmp(request, NetworkConstants::Tcp::Protocol::TRACE_CLEAR_COMMAND) == 0)
+        {
+            return Command::TraceClear;
+        }
         return Command::Unknown;
     }
 
@@ -439,6 +452,83 @@ namespace
         SendBenchmark(clientSocket, totalBytes);
     }
 
+    void HandleTraceInfo(int clientSocket)
+    {
+        TraceBuffer::SnapshotHeader header{};
+        if (!TraceBuffer::GetInfo(header))
+        {
+            constexpr char disabled[] = "ERROR TRACE_DISABLED\n";
+            SendAll(clientSocket, reinterpret_cast<const uint8_t *>(disabled), sizeof(disabled) - 1);
+            return;
+        }
+
+        char response[256]{};
+        const int length = snprintf(
+            response,
+            sizeof(response),
+            "TRACE version=%u count=%lu capacity=%lu total=%llu overwritten=%llu frozen=%lu "
+            "active_phase=%u active_conn=%u active_cmd=0x%02X active_offset=%llu active_size=%u\n",
+            static_cast<unsigned>(header.version),
+            static_cast<unsigned long>(header.count),
+            static_cast<unsigned long>(header.capacity),
+            static_cast<unsigned long long>(header.totalRecorded),
+            static_cast<unsigned long long>(header.overwritten),
+            static_cast<unsigned long>(header.frozen),
+            static_cast<unsigned>(header.activeOperation.phase),
+            static_cast<unsigned>(header.activeOperation.connectionId),
+            static_cast<unsigned>(header.activeOperation.command),
+            static_cast<unsigned long long>(header.activeOperation.fileOffset),
+            static_cast<unsigned>(header.activeOperation.size));
+
+        if (length > 0 && length < static_cast<int>(sizeof(response)))
+        {
+            SendAll(clientSocket, reinterpret_cast<const uint8_t *>(response), static_cast<size_t>(length));
+        }
+    }
+
+    void HandleTraceDownload(int clientSocket)
+    {
+        TraceBuffer::SnapshotHeader header{};
+        if (!TraceBuffer::Freeze(header))
+        {
+            constexpr char disabled[] = "ERROR TRACE_DISABLED\n";
+            SendAll(clientSocket, reinterpret_cast<const uint8_t *>(disabled), sizeof(disabled) - 1);
+            return;
+        }
+
+        if (!SendAll(
+                clientSocket,
+                reinterpret_cast<const uint8_t *>(&header),
+                sizeof(header)))
+        {
+            return;
+        }
+
+        TraceBuffer::Event event{};
+        for (uint32_t index = 0; index < header.count; ++index)
+        {
+            if (!TraceBuffer::CopySnapshotEvent(index, event) ||
+                !SendAll(
+                    clientSocket,
+                    reinterpret_cast<const uint8_t *>(&event),
+                    sizeof(event)))
+            {
+                return;
+            }
+        }
+    }
+
+    void HandleTraceClear(int clientSocket)
+    {
+        TraceBuffer::Clear();
+        TraceBuffer::Record(
+            TraceBuffer::EventType::System,
+            TraceBuffer::Phase::Idle,
+            0, 0, 0, 0, 0, 0, 0, 2);
+        constexpr char response[] = "OK TRACE_CLEARED\n";
+        SendAll(clientSocket, reinterpret_cast<const uint8_t *>(response), sizeof(response) - 1);
+    }
+
     void HandleUnknown(int clientSocket)
     {
         SendAll(
@@ -466,6 +556,21 @@ namespace
             case Command::Bench:
             {
                 HandleBench(clientSocket, request);
+                break;
+            }
+            case Command::TraceInfo:
+            {
+                HandleTraceInfo(clientSocket);
+                break;
+            }
+            case Command::TraceDownload:
+            {
+                HandleTraceDownload(clientSocket);
+                break;
+            }
+            case Command::TraceClear:
+            {
+                HandleTraceClear(clientSocket);
                 break;
             }
             case Command::Unknown:

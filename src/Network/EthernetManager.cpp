@@ -1,6 +1,7 @@
 #include "EthernetManager.h"
 #include "EthernetInternal.h"
 #include "NetworkConstants.h"
+#include "Diagnostics/TraceBuffer.h"
 
 #include <cstdio>
 
@@ -39,6 +40,40 @@ namespace
 
             EthernetInternal::linkUp = true;
 
+            bool autonegotiation = false;
+            eth_speed_t speed = ETH_SPEED_10M;
+            eth_duplex_t duplex = ETH_DUPLEX_HALF;
+            const esp_err_t autonegResult = esp_eth_ioctl(
+                EthernetInternal::ethHandle,
+                ETH_CMD_G_AUTONEGO,
+                &autonegotiation);
+            const esp_err_t speedResult = esp_eth_ioctl(
+                EthernetInternal::ethHandle,
+                ETH_CMD_G_SPEED,
+                &speed);
+            const esp_err_t duplexResult = esp_eth_ioctl(
+                EthernetInternal::ethHandle,
+                ETH_CMD_G_DUPLEX_MODE,
+                &duplex);
+            const uint32_t linkInformation =
+                (autonegotiation ? 1U : 0U) |
+                (static_cast<uint32_t>(speed) << 8) |
+                (static_cast<uint32_t>(duplex) << 16);
+            const int32_t linkInformationResult =
+                autonegResult == ESP_OK &&
+                        speedResult == ESP_OK &&
+                        duplexResult == ESP_OK
+                    ? 1
+                    : -1;
+
+            TraceBuffer::Record(
+                TraceBuffer::EventType::EthernetLink,
+                TraceBuffer::Phase::Idle,
+                0, 0, 0, 0, 0, 0, 0,
+                linkInformationResult,
+                linkInformation,
+                0x01);
+
             break;
         }
 
@@ -48,12 +83,26 @@ namespace
 
             EthernetInternal::linkUp = false;
 
+            TraceBuffer::Record(
+                TraceBuffer::EventType::EthernetLink,
+                TraceBuffer::Phase::Idle,
+                0, 0, 0, 0, 0, 0, 0,
+                0,
+                static_cast<uint32_t>(eventId));
+
             break;
         }
 
         case ETHERNET_EVENT_START:
         {
             printf("Ethernet iniciado\n");
+
+            TraceBuffer::Record(
+                TraceBuffer::EventType::EthernetLink,
+                TraceBuffer::Phase::Idle,
+                0, 0, 0, 0, 0, 0, 0,
+                2,
+                static_cast<uint32_t>(eventId));
 
             break;
         }
@@ -63,6 +112,14 @@ namespace
             printf("Ethernet detenido\n");
 
             EthernetInternal::linkUp = false;
+
+            TraceBuffer::Record(
+                TraceBuffer::EventType::EthernetLink,
+                TraceBuffer::Phase::Idle,
+                0, 0, 0, 0, 0, 0, 0,
+                0,
+                static_cast<uint32_t>(eventId),
+                0x08);
 
             break;
         }

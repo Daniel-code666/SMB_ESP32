@@ -1,6 +1,7 @@
 #include "SdStorage.h"
 #include "SdStorageInternal.h"
 #include "SdStorageConstants.h"
+#include "Diagnostics/TraceBuffer.h"
 
 #include <cstdio>
 
@@ -26,6 +27,14 @@ namespace
     {
         bool previousInserted =
             IsCardInserted();
+
+        TraceBuffer::Record(
+            TraceBuffer::EventType::SdDetect,
+            TraceBuffer::Phase::Idle,
+            0, 0, 0, 0, 0, 0, 0,
+            previousInserted ? 1 : 0,
+            0,
+            0x01);
 
         printf("Monitor SD iniciado\n");
 
@@ -64,6 +73,13 @@ namespace
 
             if (inserted != previousInserted)
             {
+                TraceBuffer::Record(
+                    TraceBuffer::EventType::SdDetect,
+                    TraceBuffer::Phase::Idle,
+                    0, 0, 0, 0, 0, 0, 0,
+                    inserted ? 1 : 0,
+                    previousInserted ? 1U : 0U,
+                    0x02);
                 vTaskDelay(
                     pdMS_TO_TICKS(
                         SdStorageConstants::Monitor::DEBOUNCE_MS
@@ -78,6 +94,13 @@ namespace
                     previousInserted
                 )
                 {
+                    TraceBuffer::Record(
+                        TraceBuffer::EventType::SdDetect,
+                        TraceBuffer::Phase::Idle,
+                        0, 0, 0, 0, 0, 0, 0,
+                        confirmedInserted ? 1 : 0,
+                        previousInserted ? 1U : 0U,
+                        0x04);
                     if (confirmedInserted)
                     {
                         printf(

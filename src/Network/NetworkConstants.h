@@ -104,6 +104,9 @@ namespace NetworkConstants
                 Get,
                 GetFirstIso,
                 Bench,
+                TraceInfo,
+                TraceDownload,
+                TraceClear,
                 Unknown
             };
 
@@ -121,6 +124,15 @@ namespace NetworkConstants
 
             constexpr size_t BENCH_COMMAND_LENGTH =
                 sizeof(BENCH_COMMAND) - 1;
+
+            constexpr const char *TRACE_INFO_COMMAND =
+                "TRACE INFO";
+
+            constexpr const char *TRACE_DOWNLOAD_COMMAND =
+                "TRACE DOWNLOAD";
+
+            constexpr const char *TRACE_CLEAR_COMMAND =
+                "TRACE CLEAR";
 
             constexpr const char *FILE_HEADER_FORMAT =
                 "SIZE %llu\nTYPE %s\nNAME %s\n";

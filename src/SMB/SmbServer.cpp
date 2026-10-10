@@ -1,6 +1,7 @@
 #include "SmbServer.h"
 #include "SmbConstants.h"
 #include "SmbProtocol.h"
+#include "Diagnostics/TraceBuffer.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -9,6 +10,7 @@
 #include <cstring>
 
 #include "esp_random.h"
+#include "esp_heap_caps.h"
 #include "esp_timer.h"
 
 #include "freertos/FreeRTOS.h"
@@ -20,6 +22,11 @@
 
 namespace
 {
+    constexpr bool READ_PERFORMANCE_LOG_ENABLED = false;
+    constexpr bool READ_SIGNATURES_ENABLED = false;
+    constexpr bool VERBOSE_PACKET_DUMPS_ENABLED = false;
+    constexpr size_t READ_AHEAD_CACHE_SIZE = 64 * 1024;
+
     constexpr size_t NEGOTIATE_REQUEST_DATA_OFFSET =
         SmbProtocol::SMB1_HEADER_SIZE + 1 + sizeof(uint16_t);
 
@@ -53,6 +60,21 @@ namespace
     };
 
     ReadConnectionDiagnostics readConnectionDiagnostics{};
+    uint16_t traceConnectionId = 0;
+    uint16_t nextTraceConnectionId = 1;
+
+    uint32_t TraceDurationUs(int64_t durationUs)
+    {
+        if (durationUs <= 0)
+        {
+            return 0;
+        }
+        if (static_cast<uint64_t>(durationUs) > UINT32_MAX)
+        {
+            return UINT32_MAX;
+        }
+        return static_cast<uint32_t>(durationUs);
+    }
 
     // Ultimas lecturas: sin imprimir datos en la ruta critica SMB.
     // El hash FNV-1a es solo una huella de diagnostico, no un CRC SDMMC.
@@ -82,6 +104,11 @@ namespace
 
     void RecordRecentRead(uint64_t offset, const uint8_t *data, size_t length)
     {
+        if constexpr (!READ_SIGNATURES_ENABLED)
+        {
+            return;
+        }
+
         auto &entry = recentReads[recentReadWriteIndex];
         entry.offset = offset;
         entry.bytes = static_cast<uint32_t>(length);
@@ -96,6 +123,11 @@ namespace
 
     void PrintRecentReads()
     {
+        if constexpr (!READ_SIGNATURES_ENABLED)
+        {
+            return;
+        }
+
         printf("SMB DIAG ULTIMAS LECTURAS: n=%zu\n", recentReadUsed);
         const size_t oldest = (recentReadWriteIndex + RECENT_READ_COUNT - recentReadUsed)
             % RECENT_READ_COUNT;
@@ -115,8 +147,6 @@ namespace
         if (diag.readRequests == 0)
         {
             diag.firstOffset = offset;
-            printf("SMB DIAG: primera lectura de la conexion: offset=%llu, bytes=%zu\n",
-                   static_cast<unsigned long long>(offset), bytes);
         }
 
         diag.lastOffset = offset;
@@ -153,6 +183,11 @@ namespace
         int64_t readUs,
         int64_t sendUs)
     {
+        if constexpr (!READ_PERFORMANCE_LOG_ENABLED)
+        {
+            return;
+        }
+
         const int64_t nowUs = esp_timer_get_time();
 
         if (readPerformance.intervalStartUs == 0)
@@ -205,6 +240,111 @@ namespace
     };
 
     OpenFile openFiles[SmbConstants::Files::MAX_OPEN_FILES]{};
+
+    struct ReadAheadCache
+    {
+        OpenFile *owner = nullptr;
+        uint8_t *data = nullptr;
+        uint64_t offset = 0;
+        size_t length = 0;
+    };
+
+    ReadAheadCache readAheadCache{};
+
+    void InvalidateReadAheadCache(OpenFile *owner = nullptr)
+    {
+        if (owner != nullptr && readAheadCache.owner != owner)
+        {
+            return;
+        }
+
+        readAheadCache.owner = nullptr;
+        readAheadCache.offset = 0;
+        readAheadCache.length = 0;
+    }
+
+    bool EnsureReadAheadBuffer()
+    {
+        if (readAheadCache.data != nullptr)
+        {
+            return true;
+        }
+
+        readAheadCache.data = static_cast<uint8_t *>(
+            heap_caps_malloc(
+                READ_AHEAD_CACHE_SIZE,
+                MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA));
+
+        return readAheadCache.data != nullptr;
+    }
+
+    FRESULT ReadFileCached(
+        OpenFile &openFile,
+        uint64_t fileOffset,
+        uint8_t *destination,
+        UINT requestedBytes,
+        UINT &bytesRead)
+    {
+        bytesRead = 0;
+
+        const uint64_t requestEnd =
+            fileOffset + static_cast<uint64_t>(requestedBytes);
+        const uint64_t cacheEnd =
+            readAheadCache.offset + static_cast<uint64_t>(readAheadCache.length);
+
+        if (
+            readAheadCache.owner == &openFile &&
+            fileOffset >= readAheadCache.offset &&
+            requestEnd <= cacheEnd)
+        {
+            memcpy(
+                destination,
+                readAheadCache.data +
+                    static_cast<size_t>(fileOffset - readAheadCache.offset),
+                requestedBytes);
+            bytesRead = requestedBytes;
+            return FR_OK;
+        }
+
+        if (!EnsureReadAheadBuffer())
+        {
+            return f_read(
+                &openFile.file,
+                destination,
+                requestedBytes,
+                &bytesRead);
+        }
+
+        const uint64_t available = openFile.size - fileOffset;
+        const UINT fillSize = static_cast<UINT>(
+            available < READ_AHEAD_CACHE_SIZE
+                ? available
+                : READ_AHEAD_CACHE_SIZE);
+        UINT cacheBytesRead = 0;
+        const FRESULT result = f_read(
+            &openFile.file,
+            readAheadCache.data,
+            fillSize,
+            &cacheBytesRead);
+
+        if (result != FR_OK)
+        {
+            InvalidateReadAheadCache();
+            return result;
+        }
+
+        readAheadCache.owner = &openFile;
+        readAheadCache.offset = fileOffset;
+        readAheadCache.length = cacheBytesRead;
+
+        const size_t copyLength =
+            requestedBytes < cacheBytesRead
+                ? requestedBytes
+                : cacheBytesRead;
+        memcpy(destination, readAheadCache.data, copyLength);
+        bytesRead = static_cast<UINT>(copyLength);
+        return FR_OK;
+    }
 
     struct SearchContext
     {
@@ -356,6 +496,7 @@ namespace
 
     void ResetOpenFile(OpenFile &openFile)
     {
+        InvalidateReadAheadCache(&openFile);
         openFile.inUse = false;
         openFile.fid = 0;
         openFile.size = 0;
@@ -376,7 +517,6 @@ namespace
         }
     }
 
-    bool SendAll(int socket, const uint8_t *data, size_t length);
     bool SendSmbPacket(int clientSocket, const uint8_t *smbData, size_t smbLength);
     bool ReceiveExact(int clientSocket, uint8_t *buffer, size_t length);
     bool ReceiveSmbPacket(int clientSocket, uint8_t *&smbBuffer, size_t &smbLength);
@@ -403,6 +543,11 @@ namespace
         size_t length,
         size_t maximumLength = 128)
     {
+        if constexpr (!VERBOSE_PACKET_DUMPS_ENABLED)
+        {
+            return;
+        }
+
         if (label == nullptr || data == nullptr)
         {
             return;
@@ -580,39 +725,8 @@ namespace
 
     int CreateListenSocket();
     void ConfigureClientSocket(int clientSocket);
-    void HandleClient(int clientSocket, const sockaddr_in &clientAddress);
+    void HandleClient(int clientSocket, int listenSocket, const sockaddr_in &clientAddress);
     void ServerTask(void *);
-
-    bool SendAll(int socket, const uint8_t *data, size_t length)
-    {
-        if (data == nullptr || length == 0)
-        {
-            return false;
-        }
-
-        size_t totalSent = 0;
-
-        while (totalSent < length)
-        {
-            const size_t requested = length - totalSent;
-            const int sent = send(socket, data + totalSent, requested, 0);
-
-            if (sent <= 0)
-            {
-                printf(
-                    "Error enviando datos SMB: sent=%d, errno=%d, enviados=%zu/%zu\n",
-                    sent,
-                    sent < 0 ? errno : 0,
-                    totalSent,
-                    length);
-                return false;
-            }
-
-            totalSent += static_cast<size_t>(sent);
-        }
-
-        return true;
-    }
 
     bool SendSmbPacket(
         int clientSocket,
@@ -634,54 +748,60 @@ namespace
             return false;
         }
 
-        constexpr size_t directTcpHeaderSize =
-            sizeof(SmbProtocol::DirectTcp::Header);
-
-        const size_t packetLength =
-            directTcpHeaderSize +
-            smbLength;
-
-        uint8_t *packet =
-            static_cast<uint8_t *>(
-                malloc(packetLength));
-
-        if (packet == nullptr)
-        {
-            printf(
-                "No fue posible reservar paquete SMB completo: %zu bytes\n",
-                packetLength);
-
-            return false;
-        }
-
-        auto *directTcpHeader =
-            reinterpret_cast<
-                SmbProtocol::DirectTcp::Header *>(
-                packet);
+        SmbProtocol::DirectTcp::Header directTcpHeader{};
 
         if (!SmbProtocol::DirectTcp::SetPayloadLength(
-                *directTcpHeader,
+                directTcpHeader,
                 static_cast<uint32_t>(
                     smbLength)))
         {
-            free(packet);
             return false;
         }
 
-        memcpy(
-            packet + directTcpHeaderSize,
-            smbData,
-            smbLength);
+        constexpr size_t directTcpHeaderSize = sizeof(directTcpHeader);
+        const size_t packetLength = directTcpHeaderSize + smbLength;
+        size_t totalSent = 0;
 
-        const bool sent =
-            SendAll(
-                clientSocket,
-                packet,
-                packetLength);
+        while (totalSent < packetLength)
+        {
+            iovec vectors[2]{};
+            msghdr message{};
 
-        free(packet);
+            if (totalSent < directTcpHeaderSize)
+            {
+                vectors[0].iov_base =
+                    reinterpret_cast<uint8_t *>(&directTcpHeader) + totalSent;
+                vectors[0].iov_len = directTcpHeaderSize - totalSent;
+                vectors[1].iov_base = const_cast<uint8_t *>(smbData);
+                vectors[1].iov_len = smbLength;
+                message.msg_iov = vectors;
+                message.msg_iovlen = 2;
+            }
+            else
+            {
+                const size_t smbOffset = totalSent - directTcpHeaderSize;
+                vectors[0].iov_base = const_cast<uint8_t *>(smbData + smbOffset);
+                vectors[0].iov_len = smbLength - smbOffset;
+                message.msg_iov = vectors;
+                message.msg_iovlen = 1;
+            }
 
-        return sent;
+            const int sent = sendmsg(clientSocket, &message, 0);
+            if (sent <= 0)
+            {
+                printf(
+                    "Error enviando paquete SMB: sent=%d, errno=%d, enviados=%zu/%zu\n",
+                    sent,
+                    sent < 0 ? errno : 0,
+                    totalSent,
+                    packetLength);
+                return false;
+            }
+
+            totalSent += static_cast<size_t>(sent);
+        }
+
+        return true;
     }
 
     bool ReceiveExact(int clientSocket, uint8_t *buffer, size_t length)
@@ -733,10 +853,29 @@ namespace
 
         SmbProtocol::DirectTcp::Header directTcpHeader{};
 
-        if (!ReceiveExact(
+        TraceBuffer::SetActive(
+            TraceBuffer::Phase::ReceiveDirectHeader,
+            traceConnectionId);
+        const int64_t headerStartUs = esp_timer_get_time();
+        errno = 0;
+
+        const bool headerReceived = ReceiveExact(
                 clientSocket,
                 reinterpret_cast<uint8_t *>(&directTcpHeader),
-                sizeof(directTcpHeader)))
+                sizeof(directTcpHeader));
+        const int headerErrno = errno;
+        const int64_t headerDurationUs = esp_timer_get_time() - headerStartUs;
+
+        TraceBuffer::Record(
+            TraceBuffer::EventType::Receive,
+            TraceBuffer::Phase::ReceiveDirectHeader,
+            traceConnectionId,
+            0, 0, 0, 0,
+            static_cast<uint16_t>(sizeof(directTcpHeader)),
+            TraceDurationUs(headerDurationUs),
+            headerReceived ? static_cast<int32_t>(sizeof(directTcpHeader)) : -headerErrno);
+
+        if (!headerReceived)
         {
             return false;
         }
@@ -775,7 +914,27 @@ namespace
             return false;
         }
 
-        if (!ReceiveExact(clientSocket, smbBuffer, smbLength))
+        TraceBuffer::SetActive(
+            TraceBuffer::Phase::ReceiveSmbBody,
+            traceConnectionId,
+            0, 0, 0, 0,
+            static_cast<uint16_t>(smbLength));
+        const int64_t bodyStartUs = esp_timer_get_time();
+        errno = 0;
+        const bool bodyReceived = ReceiveExact(clientSocket, smbBuffer, smbLength);
+        const int bodyErrno = errno;
+        const int64_t bodyDurationUs = esp_timer_get_time() - bodyStartUs;
+
+        TraceBuffer::Record(
+            TraceBuffer::EventType::Receive,
+            TraceBuffer::Phase::ReceiveSmbBody,
+            traceConnectionId,
+            0, 0, 0, 0,
+            static_cast<uint16_t>(smbLength),
+            TraceDurationUs(bodyDurationUs),
+            bodyReceived ? static_cast<int32_t>(smbLength) : -bodyErrno);
+
+        if (!bodyReceived)
         {
             free(smbBuffer);
             smbBuffer = nullptr;
@@ -3789,18 +3948,43 @@ namespace
             }
         }
 
+        constexpr bool collectTimings =
+            READ_PERFORMANCE_LOG_ENABLED || TraceBuffer::ENABLED;
         int64_t seekDurationUs = 0;
         int64_t readDurationUs = 0;
 
         if (requestedBytes > 0)
         {
-            const int64_t seekStartUs = esp_timer_get_time();
+            TraceBuffer::SetActive(
+                TraceBuffer::Phase::Seek,
+                traceConnectionId,
+                0x2E,
+                requestHeader.multiplexId,
+                fid,
+                fileOffset,
+                static_cast<uint16_t>(requestedBytes));
+            const int64_t seekStartUs = collectTimings ? esp_timer_get_time() : 0;
             const FRESULT seekResult =
                 f_lseek(
                     &openFile->file,
                     static_cast<FSIZE_t>(
                         fileOffset));
-            seekDurationUs = esp_timer_get_time() - seekStartUs;
+            if constexpr (collectTimings)
+            {
+                seekDurationUs = esp_timer_get_time() - seekStartUs;
+            }
+
+            TraceBuffer::Record(
+                TraceBuffer::EventType::Seek,
+                TraceBuffer::Phase::Seek,
+                traceConnectionId,
+                0x2E,
+                requestHeader.multiplexId,
+                fid,
+                fileOffset,
+                static_cast<uint16_t>(requestedBytes),
+                TraceDurationUs(seekDurationUs),
+                static_cast<int32_t>(seekResult));
 
             if (seekResult != FR_OK)
             {
@@ -3979,16 +4163,39 @@ namespace
 
         if (requestedBytes > 0)
         {
-            const int64_t readStartUs = esp_timer_get_time();
+            TraceBuffer::SetActive(
+                TraceBuffer::Phase::Read,
+                traceConnectionId,
+                0x2E,
+                requestHeader.multiplexId,
+                fid,
+                fileOffset,
+                static_cast<uint16_t>(requestedBytes));
+            const int64_t readStartUs = collectTimings ? esp_timer_get_time() : 0;
             const FRESULT readResult =
-                f_read(
-                    &openFile->file,
-                    response +
-                        responseDataOffset,
-                    static_cast<UINT>(
-                        requestedBytes),
-                    &bytesRead);
-            readDurationUs = esp_timer_get_time() - readStartUs;
+                ReadFileCached(
+                    *openFile,
+                    fileOffset,
+                    response + responseDataOffset,
+                    static_cast<UINT>(requestedBytes),
+                    bytesRead);
+            if constexpr (collectTimings)
+            {
+                readDurationUs = esp_timer_get_time() - readStartUs;
+            }
+
+            TraceBuffer::Record(
+                TraceBuffer::EventType::Read,
+                TraceBuffer::Phase::Read,
+                traceConnectionId,
+                0x2E,
+                requestHeader.multiplexId,
+                fid,
+                fileOffset,
+                static_cast<uint16_t>(bytesRead),
+                TraceDurationUs(readDurationUs),
+                static_cast<int32_t>(readResult),
+                static_cast<uint32_t>(requestedBytes));
 
             if (readResult != FR_OK)
             {
@@ -4012,27 +4219,30 @@ namespace
 
         // Solo primera lectura por conexion: comprobar datos reales,
         // especialmente el PVD ISO9660 en el offset 32768.
-        if (readConnectionDiagnostics.readRequests == 0)
+        if constexpr (READ_SIGNATURES_ENABLED)
         {
-            const uint8_t *data = response + responseDataOffset;
-            const bool isPvd =
-                fileOffset == 32768 && actualBytes >= 7 &&
-                data[0] == 0x01 && data[1] == 'C' &&
-                data[2] == 'D' && data[3] == '0' &&
-                data[4] == '0' && data[5] == '1' &&
-                data[6] == 0x01;
-
-            printf("SMB DIAG READ1: offset=%llu solicitados=%zu leidos=%zu PVD=%s data=",
-                   static_cast<unsigned long long>(fileOffset),
-                   requestedBytes, actualBytes, isPvd ? "si" : "no");
-
-            const size_t shown = actualBytes < 16 ? actualBytes : 16;
-            for (size_t i = 0; i < shown; ++i)
+            if (readConnectionDiagnostics.readRequests == 0)
             {
-                printf("%02X", static_cast<unsigned>(data[i]));
-                if (i + 1 < shown) printf(" ");
+                const uint8_t *data = response + responseDataOffset;
+                const bool isPvd =
+                    fileOffset == 32768 && actualBytes >= 7 &&
+                    data[0] == 0x01 && data[1] == 'C' &&
+                    data[2] == 'D' && data[3] == '0' &&
+                    data[4] == '0' && data[5] == '1' &&
+                    data[6] == 0x01;
+
+                printf("SMB DIAG READ1: offset=%llu solicitados=%zu leidos=%zu PVD=%s data=",
+                       static_cast<unsigned long long>(fileOffset),
+                       requestedBytes, actualBytes, isPvd ? "si" : "no");
+
+                const size_t shown = actualBytes < 16 ? actualBytes : 16;
+                for (size_t i = 0; i < shown; ++i)
+                {
+                    printf("%02X", static_cast<unsigned>(data[i]));
+                    if (i + 1 < shown) printf(" ");
+                }
+                printf("\n");
             }
-            printf("\n");
         }
 
         const uint16_t actualLow =
@@ -4079,11 +4289,42 @@ namespace
             actualBytes;
 
         // Incluye creación de paquete Direct TCP y envío por socket.
-        const int64_t sendStartUs = esp_timer_get_time();
-        if (!SendSmbPacket(
+        TraceBuffer::SetActive(
+            TraceBuffer::Phase::Send,
+            traceConnectionId,
+            0x2E,
+            requestHeader.multiplexId,
+            fid,
+            fileOffset,
+            static_cast<uint16_t>(actualBytes),
+            static_cast<uint32_t>(actualResponseLength));
+        const int64_t sendStartUs = collectTimings ? esp_timer_get_time() : 0;
+        errno = 0;
+        const bool sendSucceeded = SendSmbPacket(
                 clientSocket,
                 response,
-                actualResponseLength))
+                actualResponseLength);
+        const int sendErrno = errno;
+        int64_t sendDurationUs = 0;
+        if constexpr (collectTimings)
+        {
+            sendDurationUs = esp_timer_get_time() - sendStartUs;
+        }
+
+        TraceBuffer::Record(
+            TraceBuffer::EventType::Send,
+            TraceBuffer::Phase::Send,
+            traceConnectionId,
+            0x2E,
+            requestHeader.multiplexId,
+            fid,
+            fileOffset,
+            static_cast<uint16_t>(actualBytes),
+            TraceDurationUs(sendDurationUs),
+            sendSucceeded ? static_cast<int32_t>(actualResponseLength) : -sendErrno,
+            static_cast<uint32_t>(actualResponseLength));
+
+        if (!sendSucceeded)
         {
             printf(
                 "Error enviando SMB_COM_READ_ANDX response\n");
@@ -4092,19 +4333,36 @@ namespace
             return false;
         }
 
-        const int64_t sendDurationUs = esp_timer_get_time() - sendStartUs;
         // Guardar huella del bloque que acaba de aceptarse para envio TCP.
         // Se calcula antes de liberar response y no imprime nada por lectura.
-        RecordRecentRead(fileOffset, response + responseDataOffset, actualBytes);
+        if constexpr (READ_SIGNATURES_ENABLED)
+        {
+            RecordRecentRead(fileOffset, response + responseDataOffset, actualBytes);
+        }
         free(response);
 
-        RecordReadPerformance(
-            actualBytes,
-            seekDurationUs,
-            readDurationUs,
-            sendDurationUs);
+        if constexpr (READ_PERFORMANCE_LOG_ENABLED)
+        {
+            RecordReadPerformance(
+                actualBytes,
+                seekDurationUs,
+                readDurationUs,
+                sendDurationUs);
+        }
 
         RecordConnectionRead(fileOffset, actualBytes);
+
+        if constexpr (TraceBuffer::ENABLED)
+        {
+            if ((readConnectionDiagnostics.readRequests & 0xFFU) == 0U)
+            {
+                TraceBuffer::RecordHeap(
+                    traceConnectionId,
+                    readConnectionDiagnostics.readRequests);
+            }
+        }
+
+        TraceBuffer::ClearActive(traceConnectionId);
 
         return true;
     }
@@ -6021,9 +6279,19 @@ namespace
 
         if (listenSocket < 0)
         {
+            const int socketError = errno;
             printf(
                 "Error creando socket SMB: errno=%d\n",
-                errno);
+                socketError);
+
+            TraceBuffer::Record(
+                TraceBuffer::EventType::SmbServer,
+                TraceBuffer::Phase::Accept,
+                0, 0, 0, 0, 0,
+                SmbConstants::PORT,
+                0,
+                -socketError,
+                1);
 
             return -1;
         }
@@ -6053,9 +6321,19 @@ namespace
                     &serverAddress),
                 sizeof(serverAddress)) != 0)
         {
+            const int bindError = errno;
             printf(
                 "Error bind SMB: errno=%d\n",
-                errno);
+                bindError);
+
+            TraceBuffer::Record(
+                TraceBuffer::EventType::SmbServer,
+                TraceBuffer::Phase::Accept,
+                0, 0, 0, 0, 0,
+                SmbConstants::PORT,
+                0,
+                -bindError,
+                2);
 
             close(listenSocket);
             return -1;
@@ -6065,9 +6343,19 @@ namespace
                 listenSocket,
                 SmbConstants::LISTEN_BACKLOG) != 0)
         {
+            const int listenError = errno;
             printf(
                 "Error listen SMB: errno=%d\n",
-                errno);
+                listenError);
+
+            TraceBuffer::Record(
+                TraceBuffer::EventType::SmbServer,
+                TraceBuffer::Phase::Accept,
+                0, 0, 0, 0, 0,
+                SmbConstants::PORT,
+                0,
+                -listenError,
+                3);
 
             close(listenSocket);
             return -1;
@@ -6076,6 +6364,15 @@ namespace
         printf(
             "Servidor SMB escuchando en puerto %u\n",
             SmbConstants::PORT);
+
+        TraceBuffer::Record(
+            TraceBuffer::EventType::SmbServer,
+            TraceBuffer::Phase::Accept,
+            0, 0, 0, 0, 0,
+            SmbConstants::PORT,
+            0,
+            listenSocket,
+            4);
 
         return listenSocket;
     }
@@ -6094,14 +6391,31 @@ namespace
 
     void HandleClient(
         int clientSocket,
+        int listenSocket,
         const sockaddr_in &clientAddress)
     {
         ConfigureClientSocket(clientSocket);
+        traceConnectionId = nextTraceConnectionId++;
+        if (nextTraceConnectionId == 0)
+        {
+            nextTraceConnectionId = 1;
+        }
         readPerformance = ReadPerformance{};
         readConnectionDiagnostics = ReadConnectionDiagnostics{};
         readConnectionDiagnostics.connectedAtUs = esp_timer_get_time();
         recentReadWriteIndex = 0;
         recentReadUsed = 0;
+
+        TraceBuffer::Record(
+            TraceBuffer::EventType::ConnectionOpen,
+            TraceBuffer::Phase::Idle,
+            traceConnectionId,
+            0, 0, 0,
+            static_cast<uint64_t>(ntohl(clientAddress.sin_addr.s_addr)),
+            ntohs(clientAddress.sin_port),
+            0,
+            clientSocket);
+        TraceBuffer::RecordHeap(traceConnectionId, 0);
 
         char clientIp[INET_ADDRSTRLEN]{};
 
@@ -6129,12 +6443,22 @@ namespace
                 fd_set readSet;
                 FD_ZERO(&readSet);
                 FD_SET(clientSocket, &readSet);
+                FD_SET(listenSocket, &readSet);
 
                 timeval timeout{};
                 timeout.tv_sec = 10;
 
+                TraceBuffer::SetActive(
+                    TraceBuffer::Phase::WaitSocket,
+                    traceConnectionId);
+
+                const int highestSocket =
+                    listenSocket > clientSocket
+                        ? listenSocket
+                        : clientSocket;
+
                 const int ready = select(
-                    clientSocket + 1, &readSet, nullptr, nullptr, &timeout);
+                    highestSocket + 1, &readSet, nullptr, nullptr, &timeout);
 
                 if (ready == 0)
                 {
@@ -6157,6 +6481,17 @@ namespace
                                    static_cast<unsigned long long>(diag.lastReadEndOffset),
                                    static_cast<long long>(inactiveMs));
                             PrintRecentReads();
+                            TraceBuffer::Record(
+                                TraceBuffer::EventType::Idle,
+                                TraceBuffer::Phase::WaitSocket,
+                                traceConnectionId,
+                                0, 0, 0,
+                                diag.lastOffset,
+                                static_cast<uint16_t>(
+                                    diag.lastReadEndOffset - diag.lastOffset),
+                                10U * 1000U * 1000U,
+                                0,
+                                diag.readRequests);
                             idleWarningPrinted = true;
                         }
                     }
@@ -6164,12 +6499,36 @@ namespace
                     {
                         printf("SMB DIAG: 10s sin nuevo paquete TCP tras OPEN_ANDX; socket abierto\n");
                     }
+
                     continue;
                 }
 
                 if (ready < 0)
                 {
+                    TraceBuffer::Record(
+                        TraceBuffer::EventType::Error,
+                        TraceBuffer::Phase::WaitSocket,
+                        traceConnectionId,
+                        0, 0, 0, 0, 0, 0, -errno);
                     printf("SMB DIAG: select fallo, errno=%d\n", errno);
+                    break;
+                }
+
+                if (FD_ISSET(listenSocket, &readSet))
+                {
+                    TraceBuffer::Record(
+                        TraceBuffer::EventType::ListenPending,
+                        TraceBuffer::Phase::WaitSocket,
+                        traceConnectionId);
+
+                    printf(
+                        "SMB DIAG: nueva conexion pendiente; "
+                        "cerrando sesion anterior para aceptarla\n");
+
+                    // OPL puede iniciar una sesion TCP nueva sin cerrar primero
+                    // la anterior. El servidor es deliberadamente monocliente y
+                    // su estado SMB no es reentrante, por lo que se reemplaza la
+                    // sesion antigua en vez de dejar la nueva bloqueada en la cola.
                     break;
                 }
             }
@@ -6193,6 +6552,12 @@ namespace
             const SmbProtocol::Header *header =
                 nullptr;
 
+            TraceBuffer::SetActive(
+                TraceBuffer::Phase::ParseRequest,
+                traceConnectionId,
+                0, 0, 0, 0,
+                static_cast<uint16_t>(smbLength));
+
             if (!ParseSmb1Packet(
                     smbBuffer,
                     smbLength,
@@ -6204,6 +6569,29 @@ namespace
                 free(smbBuffer);
                 break;
             }
+
+            TraceBuffer::Record(
+                TraceBuffer::EventType::SmbRequest,
+                TraceBuffer::Phase::ParseRequest,
+                traceConnectionId,
+                header->command,
+                header->multiplexId,
+                0,
+                0,
+                static_cast<uint16_t>(smbLength),
+                0,
+                static_cast<int32_t>(smbLength),
+                (static_cast<uint32_t>(header->treeId) << 16) |
+                    header->userId);
+
+            TraceBuffer::SetActive(
+                TraceBuffer::Phase::Dispatch,
+                traceConnectionId,
+                header->command,
+                header->multiplexId,
+                0,
+                0,
+                static_cast<uint16_t>(smbLength));
 
             // READ_ANDX se resume cada cinco segundos en SMB PERF.
             if (header->command != 0x2E)
@@ -6247,6 +6635,9 @@ namespace
         }
 
         PrintConnectionReadSummary();
+        TraceBuffer::SetActive(
+            TraceBuffer::Phase::Close,
+            traceConnectionId);
         CloseAllOpenFiles();
         ResetSearchContext();
 
@@ -6255,6 +6646,15 @@ namespace
             SHUT_RDWR);
 
         close(clientSocket);
+
+        TraceBuffer::Record(
+            TraceBuffer::EventType::ConnectionClose,
+            TraceBuffer::Phase::Close,
+            traceConnectionId,
+            0, 0, 0, 0, 0, 0,
+            static_cast<int32_t>(readConnectionDiagnostics.readRequests),
+            static_cast<uint32_t>(readConnectionDiagnostics.bytesSent));
+        TraceBuffer::ClearActive(traceConnectionId);
 
         printf(
             "Cliente SMB desconectado\n");
@@ -6276,6 +6676,12 @@ namespace
             printf(
                 "Esperando cliente SMB...\n");
 
+            TraceBuffer::SetActive(
+                TraceBuffer::Phase::Accept,
+                0, 0, 0, 0, 0,
+                SmbConstants::PORT,
+                5);
+
             sockaddr_in clientAddress{};
 
             socklen_t clientAddressLength =
@@ -6290,15 +6696,26 @@ namespace
 
             if (clientSocket < 0)
             {
+                const int acceptError = errno;
                 printf(
                     "Error accept SMB: errno=%d\n",
-                    errno);
+                    acceptError);
+
+                TraceBuffer::Record(
+                    TraceBuffer::EventType::SmbServer,
+                    TraceBuffer::Phase::Accept,
+                    0, 0, 0, 0, 0,
+                    SmbConstants::PORT,
+                    0,
+                    -acceptError,
+                    6);
 
                 continue;
             }
 
             HandleClient(
                 clientSocket,
+                listenSocket,
                 clientAddress);
         }
     }
@@ -6322,8 +6739,26 @@ namespace SmbServer
             printf(
                 "No fue posible crear tarea SMB\n");
 
+            TraceBuffer::Record(
+                TraceBuffer::EventType::SmbServer,
+                TraceBuffer::Phase::Accept,
+                0, 0, 0, 0, 0,
+                SmbConstants::PORT,
+                0,
+                result,
+                7);
+
             return false;
         }
+
+        TraceBuffer::Record(
+            TraceBuffer::EventType::SmbServer,
+            TraceBuffer::Phase::Accept,
+            0, 0, 0, 0, 0,
+            SmbConstants::PORT,
+            0,
+            result,
+            8);
 
         return true;
     }

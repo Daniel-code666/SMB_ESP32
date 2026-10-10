@@ -7,10 +7,13 @@
 #include "Network/TcpServer.h"
 #include "SMB/SmbServer.h"
 #include "Storage/SdSpiDiagnostic.h"
+#include "Diagnostics/TraceBuffer.h"
 
 extern "C" void app_main()
 {
     SystemInfo::Print();
+
+    TraceBuffer::Init();
 
     SdStorage::StartMonitor();
 

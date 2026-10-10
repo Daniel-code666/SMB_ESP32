@@ -33,6 +33,7 @@ namespace SdStorage
         printf("\n=== SD INIT ===\n");
 
         sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+        host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
 
         sdmmc_slot_config_t slotConfig = SDMMC_SLOT_CONFIG_DEFAULT();
 
