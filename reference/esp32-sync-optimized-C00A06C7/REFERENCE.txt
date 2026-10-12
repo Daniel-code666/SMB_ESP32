@@ -1,0 +1,21 @@
+Firmware SMB1 optimizado con acceso SDMMC exclusivamente sincrono
+
+Fecha de compilacion: 2026-10-11
+
+firmware.bin
+SHA256: C00A06C7D436997F0486AFAE64DBD10975770014412309E527BD7F71EFF5925C
+
+firmware.elf
+SHA256: 5007BC7E797224993E82AA8EEB51A98819633B3867E13E56844B05C82CE4E30C
+
+Configuracion relevante:
+- SDMMC permanece en lectura de un sector por comando.
+- Cache read-ahead sincrona de 16 KiB.
+- Precarga asincrona desactivada: no existe acceso SD desde otra tarea.
+- Buffer de recepcion SMB y respuesta READ_ANDX reutilizables.
+- f_lseek omitido cuando la solicitud ya esta cubierta por cache.
+- Trazador detallado, consola de metricas y servidor auxiliar TCP desactivados.
+- Sin cambios en el formato de respuestas SMB1 ni en la negociacion.
+
+Esta version sustituye la prueba esp32-prefetch-production-05ADC0CD, que
+provoco ESP_ERR_TIMEOUT (0x107) en SDMMC y no debe utilizarse.

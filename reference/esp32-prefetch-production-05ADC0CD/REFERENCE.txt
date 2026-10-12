@@ -1,0 +1,33 @@
+NO USAR - prueba descartada por errores SDMMC 0x107
+
+ESP32-S3 SMB1 - firmware de prueba con precarga
+
+Fecha de compilacion: 2026-10-11
+
+firmware.bin
+SHA256: 05ADC0CDD85C327B367AC6E91204A3ED67D27F227C81CB4F3E75473EB11AF279
+
+firmware.elf
+SHA256: E7C07053874A602DF30A1BC68B78DB627D2EDFA7A9BF487C7FC61B9B678A7EB6
+
+Configuracion relevante:
+- SDMMC permanece en lectura estable de un sector por comando.
+- Cache activa de 16 KiB y segunda cache de 16 KiB precargada por tarea.
+- La precarga usa un FIL independiente y FatFs serializa el volumen.
+- Buffer de recepcion SMB y respuesta READ_ANDX reutilizables.
+- f_lseek omitido cuando la solicitud ya esta cubierta por cache.
+- Trazador detallado, consola de metricas y servidor auxiliar TCP desactivados.
+- Sin cambios en el formato de respuestas SMB1 ni en la negociacion.
+
+Mensajes esperados:
+SMB PREFETCH: doble cache de 16 KiB activa
+SMB PREFETCH FIN: solicitadas=N usadas=N descartadas=N esperas=N errores=N
+
+Si la reserva de memoria o una precarga falla, el servidor conserva el camino
+sincrono anterior. La referencia estable previa permanece en:
+reference/esp32-stable-sector1-0B493FA3
+
+Resultado observado:
+- sdmmc_wait_for_idle y sdmmc_read_sectors_dma devolvieron 0x107.
+- La conexion SMB y el enlace Ethernet cayeron despues del fallo de lectura.
+- Sustituida por reference/esp32-sync-optimized-C00A06C7.

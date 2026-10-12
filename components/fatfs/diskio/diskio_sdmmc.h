@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <stdint.h>
 #include "sd_protocol_types.h"
 
 #ifdef __cplusplus
@@ -35,6 +36,25 @@ void ff_diskio_register_sdmmc(unsigned char pdrv, sdmmc_card_t* card);
  * @return Driver number to the card
  */
 BYTE ff_diskio_get_pdrv_card(const sdmmc_card_t* card);
+
+/**
+ * Diagnostic-only control for SDMMC read grouping. The firmware keeps this at
+ * one sector during normal operation. Values above one are intended only for
+ * the offline, read-only SD profiler.
+ */
+void ff_sdmmc_set_read_batch_size(uint32_t sectors);
+uint32_t ff_sdmmc_get_read_batch_size(void);
+
+typedef struct {
+    uint64_t command_count;
+    uint64_t sector_count;
+    uint32_t error_count;
+    int32_t last_error;
+} ff_sdmmc_read_stats_t;
+
+void ff_sdmmc_enable_read_stats(bool enable);
+void ff_sdmmc_reset_read_stats(void);
+void ff_sdmmc_get_read_stats(ff_sdmmc_read_stats_t* stats);
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,7 @@
+Firmware instrumentado con perfilador SD y caché SMB de 16 KiB
+
+firmware.bin SHA-256: 1FFA58CF8B46D780872637B98A7E90AC60903692A0D1993D93EDC8483960E21E
+firmware.elf SHA-256: 4992D374DDA4E04554747482BCC02D7EA8297F1C6B533DAA080C3CDE10E1930F
+
+SD PROFILE compara agrupaciones de 1, 2, 4, 8 y 16 sectores únicamente con
+SMB desconectado. El modo normal y el modo restaurado son siempre un sector.

@@ -504,6 +504,15 @@ namespace
             return;
         }
 
+        TraceBuffer::MetricsSummary summary{};
+        if (!TraceBuffer::GetSummary(summary) ||
+            !SendAll(clientSocket,
+                     reinterpret_cast<const uint8_t *>(&summary),
+                     sizeof(summary)))
+        {
+            return;
+        }
+
         TraceBuffer::Event event{};
         for (uint32_t index = 0; index < header.count; ++index)
         {
@@ -512,6 +521,17 @@ namespace
                     clientSocket,
                     reinterpret_cast<const uint8_t *>(&event),
                     sizeof(event)))
+            {
+                return;
+            }
+        }
+
+        for (uint32_t index = 0; index < header.slowCount; ++index)
+        {
+            if (!TraceBuffer::CopySlowEvent(index, event) ||
+                !SendAll(clientSocket,
+                         reinterpret_cast<const uint8_t *>(&event),
+                         sizeof(event)))
             {
                 return;
             }

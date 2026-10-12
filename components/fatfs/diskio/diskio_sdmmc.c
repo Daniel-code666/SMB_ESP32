@@ -5,15 +5,20 @@
  */
 
 #include "diskio_impl.h"
+#include "diskio_sdmmc.h"
 #include "private_include/diskio_sdmmc_private.h"
 #include "ffconf.h"
 #include "ff.h"
 #include "sdmmc_cmd.h"
 #include "esp_log.h"
 #include "esp_compiler.h"
+#include <string.h>
 
 static sdmmc_card_t* s_cards[FF_VOLUMES] = { NULL };
 static bool s_disk_status_check_en[FF_VOLUMES] = { };
+static uint32_t s_read_batch_size = 1;
+static bool s_read_stats_enabled = false;
+static ff_sdmmc_read_stats_t s_read_stats = { };
 
 static const char* TAG = "diskio_sdmmc";
 
@@ -55,15 +60,26 @@ static DRESULT ff_sdmmc_read (BYTE pdrv, BYTE* buff, DWORD sector, UINT count)
 
     const size_t sectorSize = card->csd.sector_size;
 
-    for (UINT i = 0; i < count; ++i) {
-        BYTE* sectorBuffer = buff + (i * sectorSize);
-        const DWORD currentSector = sector + i;
-
+    UINT processed = 0;
+    while (processed < count) {
+        const UINT remaining = count - processed;
+        const UINT batch = remaining < s_read_batch_size ? remaining : s_read_batch_size;
+        BYTE* sectorBuffer = buff + (processed * sectorSize);
+        const DWORD currentSector = sector + processed;
         esp_err_t err = sdmmc_read_sectors(
             card,
             sectorBuffer,
             currentSector,
-            1);
+            batch);
+
+        if (s_read_stats_enabled) {
+            ++s_read_stats.command_count;
+            s_read_stats.sector_count += batch;
+            if (unlikely(err != ESP_OK)) {
+                ++s_read_stats.error_count;
+                s_read_stats.last_error = err;
+            }
+        }
 
         if (unlikely(err != ESP_OK)) {
             ESP_LOGE(
@@ -74,9 +90,38 @@ static DRESULT ff_sdmmc_read (BYTE pdrv, BYTE* buff, DWORD sector, UINT count)
 
             return RES_ERROR;
         }
+
+        processed += batch;
     }
 
     return RES_OK;
+}
+
+void ff_sdmmc_set_read_batch_size(uint32_t sectors)
+{
+    s_read_batch_size = sectors == 0 ? 1 : sectors;
+}
+
+uint32_t ff_sdmmc_get_read_batch_size(void)
+{
+    return s_read_batch_size;
+}
+
+void ff_sdmmc_enable_read_stats(bool enable)
+{
+    s_read_stats_enabled = enable;
+}
+
+void ff_sdmmc_reset_read_stats(void)
+{
+    memset(&s_read_stats, 0, sizeof(s_read_stats));
+}
+
+void ff_sdmmc_get_read_stats(ff_sdmmc_read_stats_t* stats)
+{
+    if (stats != NULL) {
+        *stats = s_read_stats;
+    }
 }
 
 static DRESULT ff_sdmmc_write (BYTE pdrv, const BYTE* buff, DWORD sector, UINT count)

@@ -1,0 +1,7 @@
+Variante instrumentada con caché de 16 KiB y marcadores genéricos
+
+firmware.bin SHA-256: 2F669E93380BDCFA8D73DA16FA486491D6C39E4016E5F4ED630656CA89B59D8C
+firmware.elf SHA-256: BB19F36CFD8682A8F919EE757E0D774AEED769D67A961B38EBD0E387D7D68E24
+
+Referencia inmediatamente anterior a la prueba controlada de 8 KiB.
+Incluye CINEMATIC_START, CINEMATIC_STUTTER y CINEMATIC_END genéricos.

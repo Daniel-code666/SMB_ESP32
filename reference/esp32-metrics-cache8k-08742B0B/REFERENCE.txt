@@ -1,0 +1,7 @@
+Variante experimental instrumentada con caché de 8 KiB
+
+firmware.bin SHA-256: 08742B0BBC31496A2077964A4305BE28D2F4FC28504C0AEEBF3B7E9ECB0F7456
+firmware.elf SHA-256: 34498D8A4B5C0BBFED16A3E71DD04259FCE274380D20549D631E977F7E2774E6
+
+Único cambio de rendimiento respecto a la referencia 2F669E93: tamaño de
+READ_AHEAD_CACHE_SIZE reducido de 16 KiB a 8 KiB.

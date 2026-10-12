@@ -1,0 +1,8 @@
+Firmware estable con lectura SDMMC de un sector y cache SMB de 16 KiB
+
+firmware.bin SHA-256: 0B493FA3672207DD847C2DE4F171B5813C5519099E63C55ABF8225541FDD433F
+firmware.elf SHA-256: 2AB0856A700F3F01B0AF4D6CD38E2CF2E93E47C0B326A8E843B4F4031B84C54D
+
+Esta es la version inmediatamente anterior al experimento de lectura
+multibloque adaptativa. Conserva el perfilador SD en una tarea temporal de
+12 KiB, con restauracion automatica a un sector al terminar.

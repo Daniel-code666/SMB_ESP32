@@ -1,0 +1,7 @@
+Referencia instrumentada con caché de lectura anticipada de 64 KiB
+
+firmware.bin SHA-256: CA3EB30A2EAD08B34B67921D4386EAC4BD579513B90E9441D767131B35A74468
+firmware.elf SHA-256: CB2874B23199E9EAB3FA0BF4771B128FE8696E564ABBE8E493784F2F9591E152
+
+Esta es la referencia de la primera captura válida. No contiene la variante
+experimental de 16 KiB.

@@ -1,0 +1,9 @@
+Firmware con lectura SDMMC multibloque adaptativa y cache SMB de 16 KiB
+
+firmware.bin SHA-256: 1730B4A4E2A6DC712F31CE01CFB0AE396B028C5FA3BC79D019C27EBBDE214BC5
+firmware.elf SHA-256: 59F307E44679EA9D5437DF7EF8851A676120AE3EAE5E01E65D25BE6CC184FED0
+
+La lectura normal comienza con hasta 16 sectores por comando. Ante el primer
+error multibloque, relee el bloque completo sector por sector y mantiene el
+modo de un sector hasta el siguiente reinicio. METRICS INFO muestra el estado
+en SD_ADAPTIVE_INFO. El perfilador SD sigue disponible con SMB desconectado.

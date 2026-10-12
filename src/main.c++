@@ -13,7 +13,14 @@ extern "C" void app_main()
 {
     SystemInfo::Print();
 
-    TraceBuffer::Init();
+    if constexpr (TraceBuffer::ENABLED)
+    {
+        TraceBuffer::Init();
+        if (!TraceBuffer::StartSerialConsole())
+        {
+            printf("METRICS: no fue posible iniciar la consola de captura\n");
+        }
+    }
 
     SdStorage::StartMonitor();
 
@@ -27,10 +34,15 @@ extern "C" void app_main()
 
     EthernetManager::TestConnection();
 
-    if (!TcpServer::Start())
+    // El puerto auxiliar 5000 solo se usa para benchmark y descarga de trazas.
+    // No reserva tarea ni buffers en la compilacion de juego.
+    if constexpr (TraceBuffer::ENABLED)
     {
-        printf("Error iniciando servidor TCP\n");
-        return;
+        if (!TcpServer::Start())
+        {
+            printf("Error iniciando servidor TCP\n");
+            return;
+        }
     }
 
     if (!SmbServer::Start())

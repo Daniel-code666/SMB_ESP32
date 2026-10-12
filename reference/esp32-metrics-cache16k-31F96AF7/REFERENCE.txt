@@ -1,0 +1,7 @@
+Variante experimental instrumentada con caché de 16 KiB
+
+firmware.bin SHA-256: 31F96AF796422F18A9B897DC719866DCE66D06FBAA6AD556453961077F9E992C
+firmware.elf SHA-256: 2034F52E02E2949612549515F12D2168E14838E02AEBC5C2FE79B48EC78A54E3
+
+Único cambio de rendimiento respecto a la referencia CA3EB30A: tamaño de
+READ_AHEAD_CACHE_SIZE reducido de 64 KiB a 16 KiB.
