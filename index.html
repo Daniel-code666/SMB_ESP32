@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0a1222">
-  <meta name="description" content="Bitácora técnica de SMB_ESP32: servidor SMB1 en ESP32-S3, Ethernet W5500 y microSD SDMMC para cargar juegos en una PlayStation 2 Slim mediante Open PS2 Loader.">
+  <meta name="description" content="SMB_ESP32: firmware SMB1 para PS2 con ESP32-S3, W5500 y microSD. Implementación, configuración, benchmarks SDMMC, caché, diagnósticos y límites comprobados de la primera fase.">
   <meta property="og:type" content="website">
   <meta property="og:title" content="SMB_ESP32 — Primera fase">
-  <meta property="og:description" content="Un servidor SMB1 propio para PS2: arquitectura, hardware, protocolo, pruebas, soluciones y próximos pasos.">
-  <title>SMB_ESP32 | Primera fase — ESP32-S3 + W5500</title>
+  <meta property="og:description" content="De la ISO al gameplay: servidor SMB1, caché de 16 KiB, capturas de latencia, pruebas SDMMC y siguiente fase ESP32-P4.">
+  <title>SMB_ESP32 | Fase 01 · Desarrollo, métricas y resultados</title>
   <style>
     :root { color-scheme: dark; --bg:#08111e; --panel:#111e30; --panel2:#14243a; --line:#2b3d54; --text:#ebf3fd; --muted:#a4b8cb; --cyan:#62dbf6; --lime:#9bebc3; --amber:#f2ca8c; --pink:#dca6ff; --radius:17px; }
     * { box-sizing: border-box; }
@@ -88,9 +88,23 @@
     summary { padding:15px 0; cursor:pointer; font-weight:750; }
     details[open] { padding-bottom:19px; }
     .mini-note { border-left:3px solid var(--amber); background:#f2ca8c0a; padding:14px 17px; border-radius:0 10px 10px 0; font-size:14px; color:#d2dfec; }
+    .fact { display:flex; justify-content:space-between; gap:12px; align-items:baseline; font-size:13px; margin:0 0 8px; color:var(--muted); }
+    .fact strong { color:#edf6ff; white-space:nowrap; }
+    .track { width:100%; height:10px; background:#091423; border:1px solid #34506c; border-radius:999px; overflow:hidden; margin-bottom:14px; }
+    .fill { height:100%; width:var(--w); background:linear-gradient(90deg,#3e9cbd,#77e4ef); border-radius:999px; }
+    .fill.warn { background:linear-gradient(90deg,#a77b40,#e8bd7c); }
+    .source-link { font-size:12px; color:var(--muted); }
+    .mono { font-variant-numeric:tabular-nums; }
+    .checklist { display:grid; gap:8px; padding:0; list-style:none; margin:0; }
+    .checklist li { padding:9px 12px; border:1px solid var(--line); border-radius:9px; background:#ffffff05; color:#c8d9e8; font-size:13px; }
+    .tag { display:inline-block; padding:1px 6px; font-size:11px; background:#62dbf610; border:1px solid #62dbf636; border-radius:5px; color:var(--cyan); }
+    @media (max-width:940px) { .navlinks { gap:8px 11px; } }
+    @media print { :root { color-scheme:light; } body { background:white; color:black; } .sitebar { position:static; } .card,.stat,.diagram,.step,details { break-inside:avoid; } }
+
+    .grid > *, .steps > *, .card, .grid, .diagram { min-width:0; }
     .foot { border-top:1px solid var(--line); padding:26px 0 38px; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; color:var(--muted); font-size:12px; }
     .muted { color:var(--muted); }
-    @media (max-width:750px) { .navlinks { display:none; } .hero { padding-top:48px; } .stat-grid, .steps { grid-template-columns:repeat(2,minmax(0,1fr)); } .grid { grid-template-columns:1fr; } }
+    @media (max-width:750px) { .navlinks { display:none; } .hero { padding-top:48px; } .stat-grid, .steps { grid-template-columns:repeat(2,minmax(0,1fr)); } .grid { grid-template-columns:minmax(0,1fr); } }
     @media (max-width:490px) { .shell { width:min(100% - 26px,1080px); } .stat-grid,.steps { grid-template-columns:1fr; } .hero { padding-top:32px; } h1 { letter-spacing:-1.3px; } .card,.diagram { padding:17px; } .stat { padding:15px; } }
     @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
   </style>
@@ -102,39 +116,42 @@
       <nav class="navlinks" aria-label="Navegación principal">
         <a href="#arquitectura">Arquitectura</a>
         <a href="#hardware">Hardware</a>
-        <a href="#implementacion">Implementación</a>
-        <a href="#bitacora">Bitácora</a>
-        <a href="#siguiente">Próxima fase</a>
+        <a href="#configuracion">Configuración</a>
+        <a href="#implementacion">Firmware</a>
+        <a href="#mediciones">Rendimiento</a>
+        <a href="#diagnostico">Diagnóstico</a>
+        <a href="#siguiente">Fase 02</a>
       </nav>
     </div>
   </header>
 
   <main class="shell" id="inicio">
     <div class="hero">
-      <div class="eyebrow"><span class="dot"></span> Bitácora técnica · Fase 01 · Octubre de 2026</div>
+      <div class="eyebrow"><span class="dot"></span> Informe técnico · Fase 01 · Octubre de 2026</div>
       <h1>Una PS2. Una microSD.<br><span>Un servidor SMB1 propio.</span></h1>
-      <p class="lead">Desarrollo experimental de un servidor de archivos SMB1 sobre <strong>ESP32-S3 + W5500 + SDMMC</strong> para ejecutar juegos de PlayStation 2 desde <strong>Open PS2 Loader</strong>, sin depender de un PC encendido.</p>
+      <p class="lead">Firmware SMB1 sobre <strong>ESP32-S3 + W5500 + microSD SDMMC</strong> para ejecutar juegos de PlayStation 2 desde <strong>Open PS2 Loader</strong>. Gameplay funcional; cinemáticas con <em>stutter</em>. Resultados medidos, soluciones adoptadas y experimentos descartados.</p>
       <div class="hero-cta">
         <a class="action primary" href="https://github.com/Daniel-code666/SMB_ESP32" target="_blank" rel="noopener noreferrer">↗ Ver código en GitHub</a>
         <a class="action secondary" href="#bitacora">Ver avances y problemas</a>
       </div>
       <div class="stat-grid" aria-label="Indicadores de la primera fase">
-        <div class="stat"><b>SMB1</b><span>Protocolo implementado en C++</span></div>
-        <div class="stat"><b>4 bits</b><span>Bus SDMMC de la microSD</span></div>
-        <div class="stat"><b>2,95 GB</b><span>ISO de Marvel probada (~2,95 × 10⁹ bytes)</span></div>
-        <div class="stat"><b>Funcional</b><span>Juegos iniciados desde el ESP32</span></div>
+        <div class="stat"><b>SMB1 / 445</b><span>Direct TCP · recurso PS2SMB</span></div>
+        <div class="stat"><b>16 KiB</b><span>Caché síncrona de lectura estable</span></div>
+        <div class="stat"><b>2 juegos</b><span>Gameplay validado según README</span></div>
+        <div class="stat"><b>Fase 01</b><span>Funcional con límite audiovisual</span></div>
       </div>
     </div>
 
     <section id="resumen" aria-labelledby="resumen-title">
-      <h2 id="resumen-title">Qué se consiguió</h2>
-      <p class="section-lead">El objetivo inicial era convertir una microSD en un almacenamiento de juegos accesible desde una PS2 Slim mediante Ethernet. La primera fase llegó a ejecutar juegos reales con un servidor SMB1 escrito para el microcontrolador.</p>
+      <h2 id="resumen-title">Resultado alcanzado</h2>
+      <p class="section-lead">La meta de esta fase era prescindir del servidor Samba externo durante el juego. Se consiguió un servidor autónomo capaz de publicar una microSD, responder a OPL y mantener partidas jugables. Los límites de rendimiento se documentaron con trazas y pruebas reproducibles.</p>
       <div class="grid">
-        <article class="card"><div class="label">Resultado principal</div><h3>Lectura de juegos por red</h3><p>OPL detecta el recurso compartido del ESP32, enumera los juegos disponibles, abre las ISO y lee sus datos durante el arranque y la ejecución.</p><span class="badge">Comprobado en hardware</span></article>
-        <article class="card"><div class="label">Trabajo propio</div><h3>SMB1 sin Samba ni Linux en el dispositivo</h3><p>Se desarrollaron las respuestas SMB1 necesarias para las pruebas de OPL, usando sockets TCP/lwIP y archivos FatFs sobre microSD.</p><span class="badge info">Implementación específica para OPL</span></article>
-        <article class="card"><div class="label">Corrección decisiva</div><h3>Marvel superó la pantalla amarilla</h3><p>Se corrigió una operación que permanecía pendiente y no finalizaba. Después de permitir que terminara correctamente, <em>Marvel Ultimate Alliance</em> consiguió arrancar.</p><span class="badge">Problema corregido</span></article>
-        <article class="card"><div class="label">Estado al cierre de fase</div><h3>Funcional, aún en optimización</h3><p>Se observaron pausas de carga (aprox. 10–15 s durante algunas secuencias de arranque) y casos de congelamiento que requieren pruebas adicionales de rendimiento, alimentación y compatibilidad con una segunda Memory Card.</p><span class="badge warn">Investigación abierta</span></article>
+        <article class="card"><div class="label">Probado en consola</div><h3>Marvel Ultimate Alliance</h3><p>Se abre y ejecuta desde la ISO almacenada en microSD; el gameplay funciona. El arranque fue más lento que con Samba y pueden aparecer tirones durante cinemáticas.</p><span class="badge">Gameplay validado</span></article>
+        <article class="card"><div class="label">Probado en consola</div><h3>God of War</h3><p>Inicia y permite jugar normalmente con la configuración de referencia; presenta stutter en cinemáticas, incluidas algunas escenas renderizadas.</p><span class="badge">Gameplay validado</span></article>
+        <article class="card"><div class="label">Ingeniería del firmware</div><h3>SMB1 propio, sin PC anfitrión</h3><p>Negociación NT LM 0.12, invitado, consultas, directorios, archivos grandes, caché read-ahead y transporte Ethernet W5500.</p><span class="badge info">Alcance específico de OPL</span></article>
+        <article class="card"><div class="label">Cierre técnico</div><h3>Stutter: limitación persistente</h3><p>Las variantes de caché, lectura SD multibloque y precarga asíncrona se midieron. Algunas eran más rápidas, pero no conservaron la estabilidad o no eliminaron el defecto audiovisual.</p><span class="badge warn">No resuelto en esta fase</span></article>
       </div>
+      <p class="hint">El <a href="https://github.com/Daniel-code666/SMB_ESP32/blob/main/README.md" target="_blank" rel="noopener noreferrer">README actual</a> indica validación con <strong>OPL 4.42d</strong>. Durante pruebas anteriores se utilizó también una compilación identificada como 0.9.3 VMC GSM 0.36.R; se distingue aquí el historial de pruebas de la versión documentada en el repositorio.</p>
     </section>
 
     <section id="arquitectura" aria-labelledby="arquitectura-title">
@@ -143,12 +160,12 @@
       <div class="diagram" role="img" aria-label="Flujo: PS2 con OPL conectada por Ethernet al W5500; W5500 por SPI al ESP32-S3; ESP32-S3 por SDMMC de cuatro bits a la tarjeta microSD">
         <div class="node"><strong>PlayStation 2 Slim · OPL 0.9.3</strong><small>Cliente SMB1 / carga de ISO</small></div>
         <div class="arrow">↕ <span style="font-size:12px;font-weight:500;color:#b0cbe2">Ethernet / TCP</span></div>
-        <div class="node"><strong>W5500 · PHY + controlador Ethernet</strong><small>Enlace físico con la consola</small></div>
-        <div class="arrow">↕ <span style="font-size:12px;font-weight:500;color:#b0cbe2">SPI</span></div>
-        <div class="node"><strong>ESP32-S3 · SMB1 + lwIP + FatFs</strong><small>Negociación, sesiones, búsqueda, apertura y lectura de archivos</small></div>
+        <div class="node"><strong>W5500 · Ethernet por SPI</strong><small>PHY, MAC y transporte mediante ESP-IDF / lwIP</small></div>
+        <div class="arrow">↕ <span style="font-size:12px;font-weight:500;color:#b0cbe2">SPI · 40 MHz / DMA</span></div>
+        <div class="node"><strong>ESP32-S3 · SMB1 + lwIP + FatFs</strong><small>Servidor monocliente · TCP 445 · caché 16 KiB</small></div>
         <div class="arrow">↕ <span style="font-size:12px;font-weight:500;color:#b0cbe2">SDMMC / 4 bits</span></div>
         <div class="node"><strong>microSD · Archivos ISO</strong><small>Almacenamiento local del servidor</small></div>
-        <p class="hint">Topología probada: conexión Ethernet directa PS2 ↔ W5500, sin router obligatorio. Las direcciones IP utilizadas en pruebas fueron 169.254.72.78 (PS2) y 169.254.72.77 (servidor).</p>
+        <p class="hint">La raíz de la microSD se publica como <code>PS2SMB</code>. La PS2 (<code>169.254.72.78</code>) se conecta directamente al ESP32 (<code>169.254.72.77</code>), sin router ni PC durante el juego.</p>
       </div>
     </section>
 
@@ -160,14 +177,14 @@
           <thead><tr><th>Elemento</th><th>Especificación / función</th></tr></thead>
           <tbody>
             <tr><td>Consola</td><td>PlayStation 2 Slim, familia <code>SCPH-9000x</code>, con modificación de arranque instalada.</td></tr>
-            <tr><td>Cargador</td><td>Open PS2 Loader <code>0.9.3 VMC GSM 0.36.R</code> (identificación visible de la compilación).</td></tr>
+            <tr><td>Cargador</td><td><strong>OPL 4.42d</strong> (según el README actual del repositorio). En pruebas históricas se mencionó además <code>0.9.3 VMC GSM 0.36.R</code>.</td></tr>
             <tr><td>Identificación del chip</td><td>Menú TOXIC: <code>DMS4 1.0 SE Lite</code>, Flash <code>FF.7F</code>, Config <code>1.2</code>. Identificación reportada por el menú; hardware físico no verificado.</td></tr>
             <tr><td>Memory Card 1 (<code>mc0:</code>)</td><td>Tarjeta con FMCB y ejecutables de arranque. Contiene <code>BOOT/BOOT.ELF</code> (uLaunchELF) y <code>BOOT/OPNPS2LD.ELF</code> (OPL); se accede mediante el mecanismo de arranque disponible.</td></tr>
             <tr><td>Memory Card 2 (<code>mc1:</code>)</td><td>Tarjeta original con partidas guardadas; sin ejecutables ni configuraciones de OPL. Su presencia durante ciertas cargas se investigó como posible factor de incompatibilidad; no se confirmó una causa directa en SMB.</td></tr>
             <tr><td>Microcontrolador</td><td>ESP32-S3, firmware en C++ con ESP-IDF y PlatformIO.</td></tr>
-            <tr><td>Ethernet</td><td>Módulo W5500 conectado al ESP32-S3 mediante SPI; comunicación cableada directa con la PS2.</td></tr>
-            <tr><td>Almacenamiento</td><td>Lector microSD por SDMMC de 4 bits, sistema de archivos mediante FatFs. Se adquirió una microSD de 256 GB para el proyecto.</td></tr>
-            <tr><td>Herramientas</td><td>PlatformIO, ESP-IDF, consola serial, scripts de PowerShell, captura de tráfico con <code>tshark</code> y servidor Samba en Linux usado como referencia comparativa.</td></tr>
+            <tr><td>Ethernet</td><td>Módulo W5500 por <strong>SPI a 40 MHz con DMA</strong>, conexión RJ45 directa a la PS2.</td></tr>
+            <tr><td>Almacenamiento</td><td>Lector microSD con SDMMC de <strong>4 bits</strong> y FatFs; lectura estable de <strong>512 bytes por comando SD</strong>. MicroSD de 256 GB adquirida para el proyecto.</td></tr>
+            <tr><td>Herramientas</td><td>PlatformIO + ESP-IDF, trazador binario en RAM, scripts PowerShell/Python, <code>tshark</code> y Samba en Linux solo como referencia comparativa.</td></tr>
           </tbody>
         </table>
       </div>
@@ -197,108 +214,225 @@
       </div>
     </section>
 
+    <section id="configuracion" aria-labelledby="configuracion-title">
+      <h2 id="configuracion-title">Configuración de PS2, red y microSD</h2>
+      <p class="section-lead">Parámetros documentados por el firmware. Para acceder a juegos se configura OPL como cliente Ethernet/SMB y se coloca la estructura habitual de carpetas en la raíz de la microSD.</p>
+      <div class="grid">
+        <article class="card"><div class="label">Red · punto a punto</div>
+          <div class="table-wrap"><table><tbody>
+            <tr><td>IP de servidor</td><td><code>169.254.72.77</code></td></tr>
+            <tr><td>IP de PS2</td><td><code>169.254.72.78</code></td></tr>
+            <tr><td>Máscara / gateway</td><td><code>255.255.0.0</code> / <code>0.0.0.0</code></td></tr>
+            <tr><td>Puerto TCP</td><td><code>445</code></td></tr>
+            <tr><td>Share</td><td><code>PS2SMB</code></td></tr>
+            <tr><td>Autenticación</td><td><code>guest</code> · contraseña vacía</td></tr>
+          </tbody></table></div>
+        </article>
+        <article class="card"><div class="label">Carpetas en microSD</div>
+          <pre><code>/
+├── DVD/   # Juegos en DVD
+├── CD/    # Juegos en CD
+├── VMC/   # Memory Cards virtuales
+├── CFG/   # Configuraciones
+├── ART/   # Carátulas
+├── THM/   # Temas
+├── LNG/   # Idiomas
+├── CHT/   # Trucos
+└── APPS/  # Aplicaciones</code></pre>
+          <p class="hint">Ejemplo: <code>/DVD/SLUS_213.74.Marvel Ultimate Alliance.iso</code>. El montaje necesita un sistema de archivos compatible con FatFs; el firmware no formatea automáticamente una tarjeta que no monte.</p>
+        </article>
+      </div>
+      <div class="mini-note" style="margin-top:15px"><strong>Seguridad:</strong> SMB1 y el acceso invitado se justifican por compatibilidad con OPL, no por seguridad moderna. No conectes este servicio a Internet ni lo expongas en redes no confiables. El montaje está diseñado para enlace directo con la PS2.</div>
+    </section>
+
     <section id="implementacion" aria-labelledby="implementacion-title">
-      <h2 id="implementacion-title">Qué implementa el firmware</h2>
-      <p class="section-lead">El servidor responde a un subconjunto de SMB1 orientado a los comandos que utiliza OPL. No pretende ser un reemplazo completo de Samba ni un NAS de propósito general.</p>
+      <h2 id="implementacion-title">Firmware y decisiones de diseño</h2>
+      <p class="section-lead">Implementación deliberadamente reducida del protocolo SMB1 para las operaciones que OPL necesita; no es un servidor Samba ni un NAS generalista. El código está organizado en capas de diagnóstico, red, protocolo, almacenamiento y sistema.</p>
       <div class="grid">
         <article class="card">
-          <div class="label">Protocolo y red</div>
+          <div class="label">SMB1 · NT LM 0.12</div>
+          <h3>Comandos atendidos</h3>
           <ul class="list">
-            <li>Servidor TCP mediante <code>lwIP</code>, encabezados SMB1 y transporte NetBIOS Session Service.</li>
-            <li><code>NEGOTIATE</code>, <code>SESSION_SETUP_ANDX</code> y <code>TREE_CONNECT_ANDX</code>.</li>
-            <li><code>OPEN_ANDX</code>, <code>NT_CREATE_ANDX</code>, <code>READ_ANDX</code> y <code>CLOSE</code>.</li>
-            <li><code>TRANSACTION2</code> para consultas de rutas y enumeración de directorios.</li>
-            <li><code>ECHO</code>, desconexión de recurso, cierre de sesión y creación básica de directorios.</li>
+            <li><code>NEGOTIATE</code>, <code>SESSION_SETUP_ANDX</code>, <code>TREE_CONNECT_ANDX</code>.</li>
+            <li><code>OPEN_ANDX</code>, <code>NT_CREATE_ANDX</code>, <code>READ_ANDX</code>, <code>CLOSE</code>.</li>
+            <li><code>TRANSACTION2</code> para consultas de rutas, <code>ECHO</code>, creación básica de carpetas, desconexión del recurso y cierre de sesión.</li>
+            <li>Offsets de lectura de <strong>64 bits</strong> para archivos superiores a 2 GiB.</li>
+            <li><strong>Una sesión cliente</strong> y hasta <strong>cuatro archivos abiertos</strong>, con acceso invitado sin contraseña.</li>
           </ul>
         </article>
         <article class="card">
-          <div class="label">Almacenamiento y pruebas</div>
+          <div class="label">Camino crítico · versión de referencia</div>
+          <h3>Optimizaciones conservadas</h3>
           <ul class="list">
-            <li>Inicialización y montaje de microSD con FatFs.</li>
-            <li>Consulta de tamaño, enumeración de ISO y acceso a archivos de varios gigabytes.</li>
-            <li>Offsets de lectura de 64 bits y validación de rutas solicitadas por red.</li>
-            <li>Diagnósticos de sesiones TCP, offsets y cantidades transferidas.</li>
-            <li>Verificación de bloques de lectura contra una ISO original mediante hashes FNV-1a.</li>
+            <li>Lectura SDMMC estable: <strong>un sector por comando</strong>, bus de cuatro bits.</li>
+            <li>Caché anticipada <strong>síncrona de 16 KiB</strong> y omisión de búsquedas innecesarias en los aciertos.</li>
+            <li>Reutilización de buffers SMB y respuesta de <code>READ_ANDX</code>.</li>
+            <li><code>sendmsg()</code> con vectores para evitar una copia contigua extra y <code>TCP_NODELAY</code> habilitado.</li>
+            <li>SPI W5500 a <strong>40 MHz</strong> con DMA; sockets mediante lwIP.</li>
           </ul>
         </article>
       </div>
-      <div class="mini-note" style="margin-top:15px"><strong>Alcance de la escritura:</strong> en la implementación revisada, <code>WRITE_ANDX</code> no estaba implementado. La carga de ISO funciona, pero guardar configuraciones de compatibilidad de OPL directamente en el recurso SMB puede fallar. La versión exacta del repositorio puede evolucionar.</div>
-      <div style="margin-top:15px" class="table-wrap">
-        <table>
-          <thead><tr><th>Archivos / capas</th><th>Responsabilidad</th></tr></thead>
-          <tbody>
-            <tr><td><code>SmbServer</code>, <code>SmbProtocol</code>, constantes</td><td>Sesiones, comandos SMB1, estructuras de paquetes y respuesta a lecturas.</td></tr>
-            <tr><td><code>EthernetManager</code>, red TCP</td><td>Inicialización W5500, eventos de enlace, interfaz IP y sockets.</td></tr>
-            <tr><td><code>SdStorage</code>, <code>fatfs</code></td><td>Montaje de la tarjeta, acceso a archivos y lectura de sectores SDMMC.</td></tr>
-            <tr><td><code>platformio.ini</code></td><td>Entorno ESP32-S3, framework ESP-IDF, configuración de compilación y monitor serial.</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <div class="mini-note" style="margin-top:15px"><strong>Límites deliberados:</strong> no se ofrecen SMB2/SMB3, cifrado, varios clientes ni escritura SMB de propósito general. El guardado de archivos <code>CFG</code> directamente desde OPL no se considera una capacidad demostrada; en versiones anteriores faltaba <code>WRITE_ANDX</code>.</div>
+      <div class="table-wrap" style="margin-top:15px"><table>
+        <thead><tr><th>Directorio</th><th>Responsabilidad documentada</th></tr></thead><tbody>
+          <tr><td><code>src/Diagnostics/</code></td><td>Trazador binario, marcadores y análisis de métricas.</td></tr>
+          <tr><td><code>src/Network/</code></td><td>W5500, red estática y servidor TCP auxiliar.</td></tr>
+          <tr><td><code>src/SMB/</code></td><td>Protocolos y operaciones del servidor SMB1.</td></tr>
+          <tr><td><code>src/Storage/</code></td><td>SDMMC, FatFs, detección de tarjeta y perfilador SD.</td></tr>
+          <tr><td><code>src/System/</code></td><td>Información y estado del ESP32-S3.</td></tr>
+          <tr><td><code>components/fatfs/</code></td><td>Integración y capa de almacenamiento FatFs.</td></tr>
+        </tbody></table></div>
+      <p class="hint">La referencia publicada es <a href="https://github.com/Daniel-code666/SMB_ESP32/tree/main/reference/esp32-sync-optimized-C00A06C7" target="_blank" rel="noopener noreferrer"><code>reference/esp32-sync-optimized-C00A06C7</code></a>: caché síncrona 16 KiB, SD de un sector y sin precarga paralela.</p>
     </section>
 
     <section id="bitacora" aria-labelledby="bitacora-title">
-      <h2 id="bitacora-title">Bitácora: problemas y soluciones</h2>
-      <p class="section-lead">La fase inicial avanzó mediante pruebas reales sobre la PS2, inspección de paquetes y correcciones específicas, no mediante una implementación SMB1 completa desde el primer día.</p>
+      <h2 id="bitacora-title">Bitácora de ingeniería</h2>
+      <p class="section-lead">Los cambios priorizaron primero ejecutar una ISO completa, después hacer repetible el diagnóstico y finalmente medir si las optimizaciones realmente corregían las cinemáticas.</p>
       <div class="timeline">
-        <article class="milestone"><h3>01 · Almacenamiento SDMMC operativo</h3><p>Se montó la microSD con un bus de cuatro bits, se incorporó FatFs y se verificaron lecturas de archivos ISO de varios gigabytes.</p></article>
-        <article class="milestone"><h3>02 · Errores CRC <code>0x109</code> en SDMMC <span class="badge">Mitigado</span></h3><p>Las operaciones multibloque provocaban fallos de CRC durante la lectura. Se sustituyeron por lecturas de un sector físico (512 bytes) por operación. La solución priorizó estabilidad sobre velocidad.</p></article>
-        <article class="milestone"><h3>03 · Enlace Ethernet W5500 ↔ PS2 <span class="badge warn">Limitaciones detectadas</span></h3><p>Se investigaron problemas de negociación de velocidad y dúplex. Hubo configuraciones en las que 10 Mbps half-duplex permitía conectar, mientras que otros modos fallaban. La interfaz física <code>UP</code> no implicaba por sí sola una sesión SMB sana.</p></article>
-        <article class="milestone"><h3>04 · Negociación y lectura SMB1 <span class="badge">Implementado</span></h3><p>Se añadieron los comandos necesarios para que OPL descubriera juegos, negociara una sesión, abriera ISO y realizara lecturas sucesivas por red.</p></article>
-        <article class="milestone"><h3>05 · Rendimiento afectado por logs <span class="badge">Mejorado</span></h3><p>La impresión serial de cada solicitud y bloque de datos penalizaba la transferencia. Se redujo el registro en el camino crítico y se incorporaron diagnósticos puntuales.</p></article>
-        <article class="milestone"><h3>06 · Bloqueo de Marvel en pantalla amarilla <span class="badge">Resuelto</span></h3><p>Una operación quedaba pendiente y no se cerraba correctamente. Al permitir su finalización, OPL continuó el arranque y <em>Marvel Ultimate Alliance</em> llegó a ejecutarse. La función exacta de la corrección debe consultarse en el historial del firmware.</p></article>
-        <article class="milestone"><h3>07 · Lecturas de ISO verificadas <span class="badge">Comprobado</span></h3><p>Los últimos 16 bloques de una sesión de diagnóstico coincidieron con los datos originales de la ISO, incluidos offsets superiores a 1,48 GB. Esta prueba verifica los buffers leídos; no equivale a validar todos los paquetes recibidos por la PS2.</p></article>
-        <article class="milestone"><h3>08 · Stuttering y segunda Memory Card <span class="badge warn">Pendiente</span></h3><p>Con God of War aparecieron congelamientos dependientes de la alimentación del ESP32 y del momento en que la segunda Memory Card estaba conectada. Las causas no se han demostrado y permanecen abiertas a medición.</p></article>
+        <article class="milestone"><h3>01 · MicroSD de cuatro bits y archivos grandes <span class="badge">Conseguido</span></h3><p>Montaje con FatFs, detección de tarjeta, lectura de ISO superiores a 2 GiB y soporte de offsets de 64 bits.</p></article>
+        <article class="milestone"><h3>02 · W5500 por SPI y SMB1 directo <span class="badge">Conseguido</span></h3><p>Enlace RJ45 PS2 ↔ W5500; IP estática, puerto 445, recurso PS2SMB, dialecto NT LM 0.12 y lectura mediante comandos OPL.</p></article>
+        <article class="milestone"><h3>03 · SDMMC: fallos CRC y timeout <span class="badge">Mitigado</span></h3><p>El modo multibloque generó <code>0x109</code> y <code>0x107</code> en regiones reales de ISO. El camino estable volvió a un solo sector de 512 bytes por comando, evitando degradaciones o reintentos inseguros.</p></article>
+        <article class="milestone"><h3>04 · Enlace físico frente a sesión SMB <span class="badge info">Diagnosticado</span></h3><p>Se analizaron velocidad, dúplex, retransmisiones y reconexiones. Un estado Ethernet UP no garantiza continuidad de TCP ni progreso del cliente OPL.</p></article>
+        <article class="milestone"><h3>05 · Operación pendiente durante la carga <span class="badge">Corregido</span></h3><p><em>Marvel Ultimate Alliance</em> permanecía en amarillo porque una operación quedaba esperando sin finalizar. Corregir su terminación permitió pasar a ejecución.</p></article>
+        <article class="milestone"><h3>06 · Menos copias, buffers reutilizados y sendmsg <span class="badge">Incorporado</span></h3><p>Se evitó el logging intensivo por UART, se introdujo caché read-ahead y se mejoró el camino de envío TCP para reducir trabajo innecesario.</p></article>
+        <article class="milestone"><h3>07 · Trazador binario y perfiles reproducibles <span class="badge">Implementado</span></h3><p>Eventos en RAM con marcadores de carga, cinemática y stutter; exportación y análisis de tiempos, percentiles, caudal y fallos mediante Python y PowerShell.</p></article>
+        <article class="milestone"><h3>08 · Cachés de 64 / 16 / 8 KiB <span class="badge warn">Medido; stutter persiste</span></h3><p>Menor caché redujo la duración de los fallos, pero aumentó la frecuencia de recarga. Se eligieron 16 KiB síncronos como compromiso de referencia.</p></article>
+        <article class="milestone"><h3>09 · SD multibloque y precarga asíncrona <span class="badge warn">Descartados</span></h3><p>Aunque mejoraban ciertos resultados aislados o visuales, provocaron bloqueos SDMMC y desconexiones en condiciones reales. La versión estable no los activa.</p></article>
+        <article class="milestone"><h3>10 · Cierre de la primera fase <span class="badge info">ESP32-P4 adquirido</span></h3><p>Marvel y God of War son jugables; el principal límite sigue siendo el stutter en cinemáticas. La siguiente etapa evaluará una plataforma con Ethernet integrado.</p></article>
       </div>
     </section>
 
     <section id="mediciones" aria-labelledby="mediciones-title">
-      <h2 id="mediciones-title">Mediciones y validación</h2>
-      <p class="section-lead">Los siguientes números provienen de sesiones de diagnóstico del prototipo, no de un benchmark formal de su versión definitiva.</p>
+      <h2 id="mediciones-title">Rendimiento medido: qué mejoró y qué no</h2>
+      <p class="section-lead">Datos de las campañas publicadas en <a href="https://github.com/Daniel-code666/SMB_ESP32/blob/main/PERFORMANCE_AUDIT.md" target="_blank" rel="noopener noreferrer">PERFORMANCE_AUDIT.md</a> y <a href="https://github.com/Daniel-code666/SMB_ESP32/blob/main/SD_PROFILE.md" target="_blank" rel="noopener noreferrer">SD_PROFILE.md</a>. No son estimaciones teóricas de Ethernet: provienen de capturas del firmware y un perfil controlado de la microSD.</p>
       <div class="stat-grid" style="margin-top:0">
-        <div class="stat"><b>377–424</b><span>KiB/s observados en pruebas SMB anteriores</span></div>
-        <div class="stat"><b>4 KiB</b><span>Tamaño habitual de solicitud READ_ANDX en las trazas</span></div>
-        <div class="stat"><b>2.163</b><span>READ_ANDX en una sesión analizada</span></div>
-        <div class="stat"><b>16/16</b><span>Bloques finales coincidentes con la ISO original</span></div>
+        <div class="stat"><b>337–347</b><span>KiB/s efectivos SMB en pruebas de caché 16 / 8 KiB</span></div>
+        <div class="stat"><b>16 KiB</b><span>Caché síncrona conservada</span></div>
+        <div class="stat"><b>9.227,9</b><span>KiB/s: lectura SD aislada, 16 sectores/comando</span></div>
+        <div class="stat"><b>7,74×</b><span>Mayor caudal SD aislado frente a un sector</span></div>
       </div>
       <div class="grid" style="margin-top:15px">
-        <article class="card"><h3>Marvel Ultimate Alliance</h3><p>ISO aproximada de 2.948.825.088 bytes; reconocimiento y ejecución conseguidos después de corregir la operación pendiente. Se inspeccionaron lecturas con offsets de 64 bits.</p><span class="badge">Arranque conseguido</span></article>
-        <article class="card"><h3>God of War</h3><p>Se llegó al menú en condiciones de prueba con alimentación externa. También se reprodujeron congelamientos bajo otras condiciones, por lo que no debe considerarse validada aún la estabilidad en todas las configuraciones.</p><span class="badge warn">Compatibilidad en investigación</span></article>
+        <article class="card"><div class="label">Read-ahead · comparación de caché</div><h3>Latencia de fallo / recarga</h3>
+          <div class="fact"><span>64 KiB · mediana</span><strong>60,99 ms</strong></div><div class="track"><div class="fill warn" style="--w:100%"></div></div>
+          <div class="fact"><span>16 KiB · P95</span><strong>17,26 ms</strong></div><div class="track"><div class="fill" style="--w:28.3%"></div></div>
+          <div class="fact"><span>8 KiB · P95</span><strong>10,34 ms</strong></div><div class="track"><div class="fill" style="--w:17%"></div></div>
+          <p class="hint">Las barras muestran magnitudes, pero <strong>la primera usa mediana y las otras P95</strong>; no constituyen percentiles directamente comparables. La caché de 8 KiB tuvo más fallos y no eliminó los tirones.</p>
+        </article>
+        <article class="card"><div class="label">Cinemáticas · capturas reales</div><h3>Resultado de las variantes</h3>
+          <ul class="list">
+            <li>64 KiB: 17.734 <code>READ_ANDX</code>, 16.598 aciertos y 1.136 fallos en la captura analizada.</li>
+            <li>16 KiB: 2.736 lecturas, 9.773.056 bytes y <strong>336,9 KiB/s</strong>; los primeros marcadores de stutter no coincidieron con errores registrados.</li>
+            <li>8 KiB: 7.124 lecturas, 25.530.368 bytes y <strong>347,0 KiB/s</strong>; stutter persistente.</li>
+            <li>Modo 1 de OPL: mejora visual parcial, sin corregir por completo las cinemáticas.</li>
+          </ul>
+        </article>
       </div>
-      <p class="hint">Para comparar, se utilizó Samba en un PC Linux con la misma PS2 y una copia de la ISO. Esa prueba ayudó a distinguir el comportamiento del cliente OPL, pero no aísla por completo Ethernet, almacenamiento ni temporización.</p>
+      <div class="card" style="margin-top:15px">
+        <div class="label">MicroSD · perfil aislado de God of War</div>
+        <h3>Lectura de 4 MiB desde offset 1 MiB · operaciones FatFs de 8 KiB</h3>
+        <p>Todas las modalidades del tramo aislado devolvieron el mismo CRC32 (<code>E8F0F442</code>) y ningún error. El gráfico indica caudal medido; no equivale a rendimiento de SMB durante el juego.</p>
+        <div class="fact"><span>1 sector · 1.192,3 KiB/s</span><strong>1,00×</strong></div><div class="track"><div class="fill" style="--w:12.9%"></div></div>
+        <div class="fact"><span>2 sectores · 2.161,7 KiB/s</span><strong>1,81×</strong></div><div class="track"><div class="fill" style="--w:23.4%"></div></div>
+        <div class="fact"><span>4 sectores · 3.677,0 KiB/s</span><strong>3,08×</strong></div><div class="track"><div class="fill" style="--w:39.8%"></div></div>
+        <div class="fact"><span>8 sectores · 6.421,3 KiB/s</span><strong>5,39×</strong></div><div class="track"><div class="fill" style="--w:69.6%"></div></div>
+        <div class="fact"><span>16 sectores · 9.227,9 KiB/s</span><strong>7,74×</strong></div><div class="track"><div class="fill" style="--w:100%"></div></div>
+        <div class="table-wrap" style="margin-top:16px"><table><thead><tr><th>Sectores</th><th>Comandos SD</th><th>P50 f_read</th><th>P99 f_read</th></tr></thead><tbody>
+          <tr><td>1</td><td>8.192</td><td>6.813 μs</td><td>7.128 μs</td></tr>
+          <tr><td>2</td><td>4.096</td><td>3.762 μs</td><td>3.920 μs</td></tr>
+          <tr><td>4</td><td>2.048</td><td>2.217 μs</td><td>2.302 μs</td></tr>
+          <tr><td>8</td><td>1.024</td><td>1.260 μs</td><td>1.323 μs</td></tr>
+          <tr><td>16</td><td>512</td><td>875 μs</td><td>918 μs</td></tr>
+        </tbody></table></div>
+      </div>
+      <div class="mini-note" style="margin-top:15px"><strong>Por qué no usamos 16 sectores en el firmware de juego:</strong> en otras zonas físicas de la ISO aparecieron <code>ESP_ERR_TIMEOUT (0x107)</code> y errores <code>0x109</code>. El intento de reintentar un sector tras un fallo multibloque tampoco recuperó el controlador. Una mejora del benchmark aislado no demuestra estabilidad global.</div>
+    </section>
+
+    <section id="diagnostico" aria-labelledby="diagnostico-title">
+      <h2 id="diagnostico-title">Herramientas de diagnóstico reproducible</h2>
+      <p class="section-lead">Para medir sin bloquear la consola serial durante cada lectura se diseñó una captura binaria en memoria. El código existe en el repositorio, pero la instrumentación pesada se mantiene <strong>desactivada en el firmware estable de juego</strong>.</p>
+      <div class="grid">
+        <article class="card"><div class="label">Trazas en RAM</div><h3>Captura sin escribir a la microSD</h3>
+          <ul class="list">
+            <li>Buffer circular: <strong>4.096 eventos × 40 bytes</strong> = 163.840 bytes PSRAM.</li>
+            <li>Eventos lentos: <strong>64 × 40 bytes</strong> = 2.560 bytes PSRAM.</li>
+            <li>Marca temporal, comandos SMB, tiempos, conexiones, errores y marcadores manuales.</li>
+            <li>Desactivado por defecto con <code>TraceBuffer::ENABLED = false</code>.</li>
+          </ul>
+        </article>
+        <article class="card"><div class="label">Exportación</div><h3>PowerShell + Python</h3>
+          <pre><code>powershell -ExecutionPolicy Bypass -File .\tools\capture_metrics_serial.ps1
+python .\tools\decode_trace.py .\smb-metrics.bin -o .\smb-metrics.csv</code></pre>
+          <p class="hint">El decodificador produce cronología CSV, operaciones lentas, throughput y un informe de percentiles y errores. Cambia las rutas según tu ubicación del dump.</p>
+        </article>
+      </div>
+      <div class="card" style="margin-top:15px"><div class="label">Secuencia segura de captura</div>
+        <div class="steps">
+          <div class="step"><span class="step-num">01</span><h3>Iniciar</h3><p><code>S</code> inicia captura; <code>L</code> marca comienzo de carga. <code>V</code> identifica los colores de arranque si se observan.</p></div>
+          <div class="step"><span class="step-num">02</span><h3>Marcar juego o cinemática</h3><p><code>C</code> inicia una captura de cinemática; <code>T</code> marca un tirón visible; <code>E</code> marca el final y congela.</p></div>
+          <div class="step"><span class="step-num">03</span><h3>Descargar sin cliente</h3><p><code>F</code> congela; tras desconectar SMB y confirmar el cierre, <code>D</code> descarga. No descargar durante el juego.</p></div>
+        </div>
+        <p class="hint">Otros comandos: <code>I</code> estado, <code>R</code> juego ejecutándose, <code>P</code> gameplay, <code>B</code> perfil SD. El firmware de diagnóstico rechaza el dump mientras SMB está activo.</p>
+      </div>
+      <div class="grid" style="margin-top:15px">
+        <article class="card"><h3><a href="https://github.com/Daniel-code666/SMB_ESP32/blob/main/METRICS.md" target="_blank" rel="noopener noreferrer">METRICS.md ↗</a></h3><p>Procedimiento de captura, marcas de pantalla y cinemáticas, comandos UART y formatos exportados.</p></article>
+        <article class="card"><h3><a href="https://github.com/Daniel-code666/SMB_ESP32/blob/main/SD_PROFILE.md" target="_blank" rel="noopener noreferrer">SD_PROFILE.md ↗</a></h3><p>Perfilador controlado de solo lectura, fuera de la sesión SMB y con CRC32 de validación.</p></article>
+      </div>
     </section>
 
     <section id="siguiente" aria-labelledby="siguiente-title">
-      <h2 id="siguiente-title">Fase 02 · ESP32-P4</h2>
-      <p class="section-lead">Se adquirió una nueva placa de desarrollo <strong>JC-ESP32P4-M3-DEV</strong> con ESP32-P4, ESP32-C6, Ethernet integrado y lector microSD, para explorar una arquitectura sin W5500 y evaluar posibles mejoras en el rendimiento.</p>
+      <h2 id="siguiente-title">Fase 02 · Evaluación con ESP32-P4</h2>
+      <p class="section-lead">Se adquirió una placa de desarrollo <strong>JC-ESP32P4-M3-DEV</strong> con ESP32-P4, ESP32-C6, Ethernet RJ45 y microSD integrados. Es una nueva plataforma por verificar, no una mejora de rendimiento ya demostrada.</p>
       <div class="steps">
-        <div class="step"><span class="step-num">01</span><h3>Validar la placa</h3><p>Identificar revisión de hardware, PHY Ethernet, alimentación y conexión interna de microSD.</p></div>
-        <div class="step"><span class="step-num">02</span><h3>Portar las capas</h3><p>Sustituir Ethernet SPI/W5500 por EMAC/PHY integrado y adaptar la inicialización SDMMC.</p></div>
-        <div class="step"><span class="step-num">03</span><h3>Conservar SMB1</h3><p>Reutilizar la lógica que ya permite iniciar juegos, incluidas las correcciones de sesiones y operaciones pendientes.</p></div>
-        <div class="step"><span class="step-num">04</span><h3>Medir en igualdad</h3><p>Comparar lecturas SD, tiempos TCP, pausas, retransmisiones y comportamiento en los mismos juegos.</p></div>
-        <div class="step"><span class="step-num">05</span><h3>Evaluar caché</h3><p>Estudiar almacenamiento temporal en PSRAM y lectura anticipada solo si las métricas lo justifican.</p></div>
-        <div class="step"><span class="step-num">06</span><h3>Integración física</h3><p>Finalmente revisar dimensiones, consumo y montaje interno de la PS2 Slim.</p></div>
+        <div class="step"><span class="step-num">01</span><h3>Verificar hardware</h3><p>Confirmar revisión, PHY, pinout de SDMMC, fuente de alimentación y enlace con la PS2.</p></div>
+        <div class="step"><span class="step-num">02</span><h3>Adaptar drivers</h3><p>Ethernet nativo con EMAC/PHY y nuevo montaje SDMMC, manteniendo la lógica de SMB1.</p></div>
+        <div class="step"><span class="step-num">03</span><h3>Comparar con S3</h3><p>Mismas ISO, misma PS2 y criterios de medición: caudal, P95/P99, pausas y estabilidad.</p></div>
       </div>
-      <div class="mini-note" style="margin-top:17px"><strong>Estado de esta etapa:</strong> placa adquirida; migración y mejoras de rendimiento aún no verificadas. El prototipo ESP32-S3 + W5500 se conserva como referencia funcional.</div>
+      <div class="mini-note" style="margin-top:17px"><strong>Decisión:</strong> preservar <code>reference/esp32-sync-optimized-C00A06C7</code> como referencia funcional. No atribuir de antemano el stutter únicamente al W5500 o a la CPU; la evidencia implica el recorrido completo SDMMC → FatFs → SMB1 → TCP → SPI.</div>
     </section>
 
     <section id="repositorio" aria-labelledby="repositorio-title">
-      <h2 id="repositorio-title">Código y documentación</h2>
-      <p class="section-lead">El repositorio reúne el firmware de la primera fase. La configuración pública consultada utiliza PlatformIO <code>espressif32 @ 7.0.1</code>, placa <code>esp32-s3-devkitc-1</code>, framework <code>espidf</code> y monitor serial a <code>115200</code> baudios.</p>
-      <pre><code>SMB_ESP32/
-├── components/fatfs/
-├── include/
-├── lib/
+      <h2 id="repositorio-title">Repositorio y documentación de referencia</h2>
+      <p class="section-lead">El proyecto se compila con PlatformIO y ESP-IDF. Configuración publicada: <code>espressif32 @ 7.0.1</code>, <code>esp32-s3-devkitc-1</code>, flash de 16 MB, PSRAM octal y monitor a 115.200 baudios. <code>sdkconfig.defaults</code> incluye optimizaciones de lwIP y buffers TCP de 32 KiB.</p>
+      <div class="grid">
+        <article class="card"><div class="label">Organización</div>
+          <pre><code>SMB_ESP32/
 ├── src/
-├── test/
-├── CMakeLists.txt
-└── platformio.ini</code></pre>
-      <p class="hint">Estructura de primer nivel consultada en GitHub. La bitácora combina datos del repositorio, archivos de código de diagnóstico revisados durante el desarrollo y pruebas realizadas sobre la consola; algunos cambios más recientes podrían no estar reflejados en la rama pública.</p>
-      <div class="hero-cta" style="margin-top:20px"><a class="action primary" href="https://github.com/Daniel-code666/SMB_ESP32" target="_blank" rel="noopener noreferrer">↗ Explorar SMB_ESP32</a><a class="action secondary" href="#inicio">↑ Volver al inicio</a></div>
+│   ├── Diagnostics/
+│   ├── Network/
+│   ├── SMB/
+│   ├── Storage/
+│   └── System/
+├── components/fatfs/
+├── tools/
+├── reference/
+├── README.md
+├── PERFORMANCE_AUDIT.md
+├── METRICS.md
+├── SD_PROFILE.md
+├── platformio.ini
+└── sdkconfig.defaults</code></pre>
+          <p class="hint">Estructura de referencia descrita por el README y las rutas públicas de documentación.</p>
+        </article>
+        <article class="card"><div class="label">Compilación</div>
+          <pre><code>platformio run
+platformio run --target upload --upload-port COM5
+platformio device monitor --port COM5 --baud 115200</code></pre>
+          <p>Los comandos son ejemplos para Windows; sustituir <code>COM5</code> por el puerto de la placa. La versión optimizada y estable de referencia se conserva separada de las capturas de diagnóstico.</p>
+          <ul class="list">
+            <li><a href="https://github.com/Daniel-code666/SMB_ESP32/blob/main/README.md" target="_blank" rel="noopener noreferrer">README técnico ↗</a></li>
+            <li><a href="https://github.com/Daniel-code666/SMB_ESP32/blob/main/PERFORMANCE_AUDIT.md" target="_blank" rel="noopener noreferrer">Auditoría de rendimiento ↗</a></li>
+            <li><a href="https://github.com/Daniel-code666/SMB_ESP32/blob/main/METRICS.md" target="_blank" rel="noopener noreferrer">Guía de métricas ↗</a></li>
+            <li><a href="https://github.com/Daniel-code666/SMB_ESP32/blob/main/SD_PROFILE.md" target="_blank" rel="noopener noreferrer">Perfil SD ↗</a></li>
+          </ul>
+        </article>
+      </div>
+      <p class="hint">Alcance de las fuentes: las cifras y capacidades citadas en esta página provienen principalmente de los documentos publicados en <code>main</code>. Las especificaciones de consola, chip y Memory Cards proceden de las pruebas del proyecto. La página no afirma haber recompilado o auditado íntegramente todos los archivos fuente de la rama.</p>
+      <div class="hero-cta" style="margin-top:20px"><a class="action primary" href="https://github.com/Daniel-code666/SMB_ESP32" target="_blank" rel="noopener noreferrer">↗ Explorar el repositorio</a><a class="action secondary" href="#inicio">↑ Volver al inicio</a></div>
     </section>
   </main>
 
   <footer class="shell foot">
-    <span>SMB_ESP32 · Registro de desarrollo · Primera fase (2026)</span>
+    <span>SMB_ESP32 · Informe de cierre · Primera fase (octubre de 2026)</span>
     <span>Proyecto experimental e independiente; sin afiliación con Sony, Espressif ni los editores de los juegos.</span>
   </footer>
 </body>
