@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a1222">
+  <meta name="description" content="Bitácora técnica de SMB_ESP32: servidor SMB1 en ESP32-S3, Ethernet W5500 y microSD SDMMC para cargar juegos en una PlayStation 2 Slim mediante Open PS2 Loader.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="SMB_ESP32 — Primera fase">
+  <meta property="og:description" content="Un servidor SMB1 propio para PS2: arquitectura, hardware, protocolo, pruebas, soluciones y próximos pasos.">
+  <title>SMB_ESP32 | Primera fase — ESP32-S3 + W5500</title>
+  <style>
+    :root { color-scheme: dark; --bg:#08111e; --panel:#111e30; --panel2:#14243a; --line:#2b3d54; --text:#ebf3fd; --muted:#a4b8cb; --cyan:#62dbf6; --lime:#9bebc3; --amber:#f2ca8c; --pink:#dca6ff; --radius:17px; }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin:0; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; line-height:1.64; color:var(--text); background:var(--bg); }
+    body::before { content:""; position:absolute; inset:0 0 auto; height:640px; z-index:-1; pointer-events:none; background:radial-gradient(ellipse 60% 75% at 80% 0%,#17426773,transparent 72%), radial-gradient(ellipse 50% 55% at 0% 25%,#2132555e,transparent 75%); }
+    a { color:var(--cyan); text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    a:focus-visible, summary:focus-visible { outline:2px solid var(--cyan); outline-offset:4px; }
+    .shell { width:min(1080px,calc(100% - 40px)); margin:0 auto; }
+    .sitebar { border-bottom:1px solid #ffffff19; background:#08111cdb; backdrop-filter:blur(14px); position:sticky; top:0; z-index:10; }
+    .bar-inner { display:flex; align-items:center; justify-content:space-between; gap:18px; min-height:70px; }
+    .brand { display:flex; align-items:center; gap:10px; font-weight:800; letter-spacing:.4px; color:#fff; white-space:nowrap; }
+    .brand-icon { display:grid; place-items:center; width:33px; height:33px; border:1px solid #6ce0fa6d; border-radius:9px; color:var(--cyan); font-size:18px; font-weight:900; }
+    .navlinks { display:flex; flex-wrap:wrap; gap:10px 20px; font-size:13px; font-weight:650; }
+    .navlinks a { color:var(--muted); }
+    .navlinks a:hover { color:var(--text); }
+    main { padding-bottom:45px; }
+    .hero { padding:73px 0 42px; }
+    .eyebrow { display:inline-flex; align-items:center; gap:9px; font-weight:750; font-size:12px; letter-spacing:1.4px; text-transform:uppercase; color:var(--cyan); }
+    .dot { width:8px; height:8px; border-radius:50%; background:var(--lime); box-shadow:0 0 0 4px #9bebc312; }
+    h1 { font-size:clamp(37px,6vw,70px); line-height:1.04; letter-spacing:-2.8px; margin:18px 0 18px; max-width:900px; }
+    h1 span { color:var(--cyan); }
+    .lead { color:#cad9e9; font-size:clamp(16px,1.65vw,19px); max-width:790px; margin:0 0 26px; }
+    .hero-cta { display:flex; flex-wrap:wrap; gap:11px; }
+    .action { padding:11px 18px; border:1px solid var(--line); border-radius:10px; font-size:14px; font-weight:750; display:inline-flex; align-items:center; gap:9px; }
+    .action.primary { background:var(--cyan); color:#082031; border-color:var(--cyan); }
+    .action.secondary { color:var(--text); background:#ffffff0b; }
+    .action:hover { text-decoration:none; filter:brightness(1.09); }
+    section { scroll-margin-top:90px; margin-top:57px; }
+    h2 { font-size:clamp(23px,3vw,30px); line-height:1.25; letter-spacing:-.65px; margin:0 0 10px; }
+    h3 { margin:0 0 11px; font-size:17px; letter-spacing:-.25px; }
+    .section-lead { color:var(--muted); max-width:850px; margin:0 0 22px; }
+    .stat-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-top:34px; }
+    .stat { border:1px solid var(--line); background:#122338bd; border-radius:var(--radius); padding:20px; }
+    .stat b { display:block; font-size:clamp(20px,3vw,28px); letter-spacing:-.8px; line-height:1.3; color:var(--text); }
+    .stat span { display:block; margin-top:7px; font-size:12px; color:var(--muted); }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:15px; }
+    .card { background:linear-gradient(160deg,#14243a 0%,#0e192a 100%); border:1px solid var(--line); padding:22px; border-radius:var(--radius); }
+    .card p:last-child, .card ul:last-child { margin-bottom:0; }
+    .card p { color:var(--muted); margin:5px 0 12px; }
+    .card .label { color:var(--cyan); text-transform:uppercase; font-size:11px; letter-spacing:1.2px; font-weight:800; margin-bottom:12px; }
+    .diagram { padding:22px; border:1px solid var(--line); border-radius:var(--radius); background:linear-gradient(130deg,#11243c,#0c192a); }
+    .node { border:1px solid #365777; background:#122b43; border-radius:12px; padding:15px; text-align:center; }
+    .node strong { display:block; font-size:15px; }
+    .node small { display:block; color:#b0cbe2; font-size:12px; margin-top:2px; }
+    .arrow { color:var(--cyan); text-align:center; font-size:21px; font-weight:800; line-height:1.6; }
+    .split { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .inner-arrow { text-align:center; color:var(--muted); font-size:12px; margin:7px 0; }
+    .hint { color:var(--muted); font-size:12px; margin:13px 0 0; }
+    .table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:var(--radius); }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th, td { padding:12px 15px; text-align:left; border-bottom:1px solid #ffffff14; vertical-align:top; }
+    th { color:#cce0f3; background:#182a3e; font-size:12px; text-transform:uppercase; letter-spacing:.65px; font-weight:750; }
+    td:first-child { font-weight:650; color:#eff6ff; }
+    td { color:#c2d1e1; }
+    tr:last-child td { border-bottom:0; }
+    code { font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace; font-size:.91em; color:#b0eeff; }
+    pre { overflow-x:auto; padding:18px; margin:13px 0 0; border:1px solid #39516e; border-radius:12px; background:#071321; color:#c5effd; font-size:13px; line-height:1.6; }
+    pre code { color:inherit; }
+    .badge { display:inline-block; padding:3px 9px; background:#9bebc314; border:1px solid #9bebc343; border-radius:100px; color:var(--lime); font-size:11px; font-weight:750; letter-spacing:.2px; white-space:nowrap; }
+    .badge.warn { color:var(--amber); background:#f2ca8c15; border-color:#f2ca8c4b; }
+    .badge.info { color:var(--cyan); background:#62dbf617; border-color:#62dbf64d; }
+    .list { margin:0; padding-left:19px; color:#c5d3e2; }
+    .list li { padding-left:4px; margin:7px 0; }
+    .steps { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:13px; }
+    .step { border:1px solid var(--line); border-radius:var(--radius); padding:20px; background:#111f32; }
+    .step-num { display:inline-grid; place-items:center; border-radius:9px; width:34px; height:34px; background:#62dbf619; color:var(--cyan); font-weight:800; margin-bottom:13px; }
+    .step h3 { font-size:15px; margin-bottom:7px; }
+    .step p { margin:0; font-size:13px; color:var(--muted); }
+    .timeline { border-left:2px solid #3b5877; margin-left:9px; display:grid; gap:19px; }
+    .milestone { position:relative; padding-left:25px; }
+    .milestone::before { content:""; position:absolute; left:-8px; top:7px; width:12px; height:12px; border:2px solid var(--bg); border-radius:50%; background:var(--cyan); }
+    .milestone h3 { margin:0 0 4px; font-size:15px; }
+    .milestone p { margin:0; color:var(--muted); font-size:14px; }
+    details { border:1px solid var(--line); background:#101f32; border-radius:var(--radius); padding:0 20px; }
+    summary { padding:15px 0; cursor:pointer; font-weight:750; }
+    details[open] { padding-bottom:19px; }
+    .mini-note { border-left:3px solid var(--amber); background:#f2ca8c0a; padding:14px 17px; border-radius:0 10px 10px 0; font-size:14px; color:#d2dfec; }
+    .foot { border-top:1px solid var(--line); padding:26px 0 38px; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; color:var(--muted); font-size:12px; }
+    .muted { color:var(--muted); }
+    @media (max-width:750px) { .navlinks { display:none; } .hero { padding-top:48px; } .stat-grid, .steps { grid-template-columns:repeat(2,minmax(0,1fr)); } .grid { grid-template-columns:1fr; } }
+    @media (max-width:490px) { .shell { width:min(100% - 26px,1080px); } .stat-grid,.steps { grid-template-columns:1fr; } .hero { padding-top:32px; } h1 { letter-spacing:-1.3px; } .card,.diagram { padding:17px; } .stat { padding:15px; } }
+    @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
+  </style>
+</head>
+<body>
+  <header class="sitebar">
+    <div class="shell bar-inner">
+      <a class="brand" href="#inicio" aria-label="Ir al inicio"><span class="brand-icon">S</span> SMB_ESP32</a>
+      <nav class="navlinks" aria-label="Navegación principal">
+        <a href="#arquitectura">Arquitectura</a>
+        <a href="#hardware">Hardware</a>
+        <a href="#implementacion">Implementación</a>
+        <a href="#bitacora">Bitácora</a>
+        <a href="#siguiente">Próxima fase</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell" id="inicio">
+    <div class="hero">
+      <div class="eyebrow"><span class="dot"></span> Bitácora técnica · Fase 01 · Octubre de 2026</div>
+      <h1>Una PS2. Una microSD.<br><span>Un servidor SMB1 propio.</span></h1>
+      <p class="lead">Desarrollo experimental de un servidor de archivos SMB1 sobre <strong>ESP32-S3 + W5500 + SDMMC</strong> para ejecutar juegos de PlayStation 2 desde <strong>Open PS2 Loader</strong>, sin depender de un PC encendido.</p>
+      <div class="hero-cta">
+        <a class="action primary" href="https://github.com/Daniel-code666/SMB_ESP32" target="_blank" rel="noopener noreferrer">↗ Ver código en GitHub</a>
+        <a class="action secondary" href="#bitacora">Ver avances y problemas</a>
+      </div>
+      <div class="stat-grid" aria-label="Indicadores de la primera fase">
+        <div class="stat"><b>SMB1</b><span>Protocolo implementado en C++</span></div>
+        <div class="stat"><b>4 bits</b><span>Bus SDMMC de la microSD</span></div>
+        <div class="stat"><b>2,95 GB</b><span>ISO de Marvel probada (~2,95 × 10⁹ bytes)</span></div>
+        <div class="stat"><b>Funcional</b><span>Juegos iniciados desde el ESP32</span></div>
+      </div>
+    </div>
+
+    <section id="resumen" aria-labelledby="resumen-title">
+      <h2 id="resumen-title">Qué se consiguió</h2>
+      <p class="section-lead">El objetivo inicial era convertir una microSD en un almacenamiento de juegos accesible desde una PS2 Slim mediante Ethernet. La primera fase llegó a ejecutar juegos reales con un servidor SMB1 escrito para el microcontrolador.</p>
+      <div class="grid">
+        <article class="card"><div class="label">Resultado principal</div><h3>Lectura de juegos por red</h3><p>OPL detecta el recurso compartido del ESP32, enumera los juegos disponibles, abre las ISO y lee sus datos durante el arranque y la ejecución.</p><span class="badge">Comprobado en hardware</span></article>
+        <article class="card"><div class="label">Trabajo propio</div><h3>SMB1 sin Samba ni Linux en el dispositivo</h3><p>Se desarrollaron las respuestas SMB1 necesarias para las pruebas de OPL, usando sockets TCP/lwIP y archivos FatFs sobre microSD.</p><span class="badge info">Implementación específica para OPL</span></article>
+        <article class="card"><div class="label">Corrección decisiva</div><h3>Marvel superó la pantalla amarilla</h3><p>Se corrigió una operación que permanecía pendiente y no finalizaba. Después de permitir que terminara correctamente, <em>Marvel Ultimate Alliance</em> consiguió arrancar.</p><span class="badge">Problema corregido</span></article>
+        <article class="card"><div class="label">Estado al cierre de fase</div><h3>Funcional, aún en optimización</h3><p>Se observaron pausas de carga (aprox. 10–15 s durante algunas secuencias de arranque) y casos de congelamiento que requieren pruebas adicionales de rendimiento, alimentación y compatibilidad con una segunda Memory Card.</p><span class="badge warn">Investigación abierta</span></article>
+      </div>
+    </section>
+
+    <section id="arquitectura" aria-labelledby="arquitectura-title">
+      <h2 id="arquitectura-title">Arquitectura de la solución</h2>
+      <p class="section-lead">La consola funciona como cliente SMB1; el ESP32 atiende las solicitudes de archivos y obtiene los datos de la microSD. El W5500 únicamente proporciona la interfaz de red.</p>
+      <div class="diagram" role="img" aria-label="Flujo: PS2 con OPL conectada por Ethernet al W5500; W5500 por SPI al ESP32-S3; ESP32-S3 por SDMMC de cuatro bits a la tarjeta microSD">
+        <div class="node"><strong>PlayStation 2 Slim · OPL 0.9.3</strong><small>Cliente SMB1 / carga de ISO</small></div>
+        <div class="arrow">↕ <span style="font-size:12px;font-weight:500;color:#b0cbe2">Ethernet / TCP</span></div>
+        <div class="node"><strong>W5500 · PHY + controlador Ethernet</strong><small>Enlace físico con la consola</small></div>
+        <div class="arrow">↕ <span style="font-size:12px;font-weight:500;color:#b0cbe2">SPI</span></div>
+        <div class="node"><strong>ESP32-S3 · SMB1 + lwIP + FatFs</strong><small>Negociación, sesiones, búsqueda, apertura y lectura de archivos</small></div>
+        <div class="arrow">↕ <span style="font-size:12px;font-weight:500;color:#b0cbe2">SDMMC / 4 bits</span></div>
+        <div class="node"><strong>microSD · Archivos ISO</strong><small>Almacenamiento local del servidor</small></div>
+        <p class="hint">Topología probada: conexión Ethernet directa PS2 ↔ W5500, sin router obligatorio. Las direcciones IP utilizadas en pruebas fueron 169.254.72.78 (PS2) y 169.254.72.77 (servidor).</p>
+      </div>
+    </section>
+
+    <section id="hardware" aria-labelledby="hardware-title">
+      <h2 id="hardware-title">Hardware y entorno de pruebas</h2>
+      <p class="section-lead">El montaje es un prototipo de laboratorio; aún no se ha integrado físicamente en el interior de la consola.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Elemento</th><th>Especificación / función</th></tr></thead>
+          <tbody>
+            <tr><td>Consola</td><td>PlayStation 2 Slim, familia <code>SCPH-9000x</code>, con modificación de arranque instalada.</td></tr>
+            <tr><td>Cargador</td><td>Open PS2 Loader <code>0.9.3 VMC GSM 0.36.R</code> (identificación visible de la compilación).</td></tr>
+            <tr><td>Identificación del chip</td><td>Menú TOXIC: <code>DMS4 1.0 SE Lite</code>, Flash <code>FF.7F</code>, Config <code>1.2</code>. Identificación reportada por el menú; hardware físico no verificado.</td></tr>
+            <tr><td>Memory Card 1 (<code>mc0:</code>)</td><td>Tarjeta con FMCB y ejecutables de arranque. Contiene <code>BOOT/BOOT.ELF</code> (uLaunchELF) y <code>BOOT/OPNPS2LD.ELF</code> (OPL); se accede mediante el mecanismo de arranque disponible.</td></tr>
+            <tr><td>Memory Card 2 (<code>mc1:</code>)</td><td>Tarjeta original con partidas guardadas; sin ejecutables ni configuraciones de OPL. Su presencia durante ciertas cargas se investigó como posible factor de incompatibilidad; no se confirmó una causa directa en SMB.</td></tr>
+            <tr><td>Microcontrolador</td><td>ESP32-S3, firmware en C++ con ESP-IDF y PlatformIO.</td></tr>
+            <tr><td>Ethernet</td><td>Módulo W5500 conectado al ESP32-S3 mediante SPI; comunicación cableada directa con la PS2.</td></tr>
+            <tr><td>Almacenamiento</td><td>Lector microSD por SDMMC de 4 bits, sistema de archivos mediante FatFs. Se adquirió una microSD de 256 GB para el proyecto.</td></tr>
+            <tr><td>Herramientas</td><td>PlatformIO, ESP-IDF, consola serial, scripts de PowerShell, captura de tráfico con <code>tshark</code> y servidor Samba en Linux usado como referencia comparativa.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:14px">
+        <details>
+          <summary>Ver asignación de pines del prototipo ESP32-S3</summary>
+          <div class="grid">
+            <div>
+              <h3>Tarjeta microSD · SDMMC</h3>
+              <div class="table-wrap"><table><tbody>
+                <tr><td>CLK</td><td><code>GPIO12</code></td></tr><tr><td>CMD</td><td><code>GPIO11</code></td></tr>
+                <tr><td>D0 / D1</td><td><code>GPIO13 / GPIO14</code></td></tr><tr><td>D2 / D3</td><td><code>GPIO15 / GPIO16</code></td></tr>
+                <tr><td>Detección SD</td><td><code>GPIO18</code></td></tr>
+              </tbody></table></div>
+            </div>
+            <div>
+              <h3>W5500 · SPI</h3>
+              <div class="table-wrap"><table><tbody>
+                <tr><td>SCK / MOSI</td><td><code>GPIO5 / GPIO6</code></td></tr><tr><td>MISO / CS</td><td><code>GPIO7 / GPIO8</code></td></tr>
+                <tr><td>RESET</td><td><code>GPIO9</code></td></tr><tr><td>INT</td><td><code>GPIO10</code></td></tr>
+                <tr><td>Host SPI</td><td><code>SPI2</code></td></tr>
+              </tbody></table></div>
+            </div>
+          </div>
+          <p class="hint">Asignación registrada durante el desarrollo del prototipo; revisar las constantes del firmware antes de reproducir el montaje. Compartir GND entre módulos y respetar niveles de 3,3 V.</p>
+        </details>
+      </div>
+    </section>
+
+    <section id="implementacion" aria-labelledby="implementacion-title">
+      <h2 id="implementacion-title">Qué implementa el firmware</h2>
+      <p class="section-lead">El servidor responde a un subconjunto de SMB1 orientado a los comandos que utiliza OPL. No pretende ser un reemplazo completo de Samba ni un NAS de propósito general.</p>
+      <div class="grid">
+        <article class="card">
+          <div class="label">Protocolo y red</div>
+          <ul class="list">
+            <li>Servidor TCP mediante <code>lwIP</code>, encabezados SMB1 y transporte NetBIOS Session Service.</li>
+            <li><code>NEGOTIATE</code>, <code>SESSION_SETUP_ANDX</code> y <code>TREE_CONNECT_ANDX</code>.</li>
+            <li><code>OPEN_ANDX</code>, <code>NT_CREATE_ANDX</code>, <code>READ_ANDX</code> y <code>CLOSE</code>.</li>
+            <li><code>TRANSACTION2</code> para consultas de rutas y enumeración de directorios.</li>
+            <li><code>ECHO</code>, desconexión de recurso, cierre de sesión y creación básica de directorios.</li>
+          </ul>
+        </article>
+        <article class="card">
+          <div class="label">Almacenamiento y pruebas</div>
+          <ul class="list">
+            <li>Inicialización y montaje de microSD con FatFs.</li>
+            <li>Consulta de tamaño, enumeración de ISO y acceso a archivos de varios gigabytes.</li>
+            <li>Offsets de lectura de 64 bits y validación de rutas solicitadas por red.</li>
+            <li>Diagnósticos de sesiones TCP, offsets y cantidades transferidas.</li>
+            <li>Verificación de bloques de lectura contra una ISO original mediante hashes FNV-1a.</li>
+          </ul>
+        </article>
+      </div>
+      <div class="mini-note" style="margin-top:15px"><strong>Alcance de la escritura:</strong> en la implementación revisada, <code>WRITE_ANDX</code> no estaba implementado. La carga de ISO funciona, pero guardar configuraciones de compatibilidad de OPL directamente en el recurso SMB puede fallar. La versión exacta del repositorio puede evolucionar.</div>
+      <div style="margin-top:15px" class="table-wrap">
+        <table>
+          <thead><tr><th>Archivos / capas</th><th>Responsabilidad</th></tr></thead>
+          <tbody>
+            <tr><td><code>SmbServer</code>, <code>SmbProtocol</code>, constantes</td><td>Sesiones, comandos SMB1, estructuras de paquetes y respuesta a lecturas.</td></tr>
+            <tr><td><code>EthernetManager</code>, red TCP</td><td>Inicialización W5500, eventos de enlace, interfaz IP y sockets.</td></tr>
+            <tr><td><code>SdStorage</code>, <code>fatfs</code></td><td>Montaje de la tarjeta, acceso a archivos y lectura de sectores SDMMC.</td></tr>
+            <tr><td><code>platformio.ini</code></td><td>Entorno ESP32-S3, framework ESP-IDF, configuración de compilación y monitor serial.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="bitacora" aria-labelledby="bitacora-title">
+      <h2 id="bitacora-title">Bitácora: problemas y soluciones</h2>
+      <p class="section-lead">La fase inicial avanzó mediante pruebas reales sobre la PS2, inspección de paquetes y correcciones específicas, no mediante una implementación SMB1 completa desde el primer día.</p>
+      <div class="timeline">
+        <article class="milestone"><h3>01 · Almacenamiento SDMMC operativo</h3><p>Se montó la microSD con un bus de cuatro bits, se incorporó FatFs y se verificaron lecturas de archivos ISO de varios gigabytes.</p></article>
+        <article class="milestone"><h3>02 · Errores CRC <code>0x109</code> en SDMMC <span class="badge">Mitigado</span></h3><p>Las operaciones multibloque provocaban fallos de CRC durante la lectura. Se sustituyeron por lecturas de un sector físico (512 bytes) por operación. La solución priorizó estabilidad sobre velocidad.</p></article>
+        <article class="milestone"><h3>03 · Enlace Ethernet W5500 ↔ PS2 <span class="badge warn">Limitaciones detectadas</span></h3><p>Se investigaron problemas de negociación de velocidad y dúplex. Hubo configuraciones en las que 10 Mbps half-duplex permitía conectar, mientras que otros modos fallaban. La interfaz física <code>UP</code> no implicaba por sí sola una sesión SMB sana.</p></article>
+        <article class="milestone"><h3>04 · Negociación y lectura SMB1 <span class="badge">Implementado</span></h3><p>Se añadieron los comandos necesarios para que OPL descubriera juegos, negociara una sesión, abriera ISO y realizara lecturas sucesivas por red.</p></article>
+        <article class="milestone"><h3>05 · Rendimiento afectado por logs <span class="badge">Mejorado</span></h3><p>La impresión serial de cada solicitud y bloque de datos penalizaba la transferencia. Se redujo el registro en el camino crítico y se incorporaron diagnósticos puntuales.</p></article>
+        <article class="milestone"><h3>06 · Bloqueo de Marvel en pantalla amarilla <span class="badge">Resuelto</span></h3><p>Una operación quedaba pendiente y no se cerraba correctamente. Al permitir su finalización, OPL continuó el arranque y <em>Marvel Ultimate Alliance</em> llegó a ejecutarse. La función exacta de la corrección debe consultarse en el historial del firmware.</p></article>
+        <article class="milestone"><h3>07 · Lecturas de ISO verificadas <span class="badge">Comprobado</span></h3><p>Los últimos 16 bloques de una sesión de diagnóstico coincidieron con los datos originales de la ISO, incluidos offsets superiores a 1,48 GB. Esta prueba verifica los buffers leídos; no equivale a validar todos los paquetes recibidos por la PS2.</p></article>
+        <article class="milestone"><h3>08 · Stuttering y segunda Memory Card <span class="badge warn">Pendiente</span></h3><p>Con God of War aparecieron congelamientos dependientes de la alimentación del ESP32 y del momento en que la segunda Memory Card estaba conectada. Las causas no se han demostrado y permanecen abiertas a medición.</p></article>
+      </div>
+    </section>
+
+    <section id="mediciones" aria-labelledby="mediciones-title">
+      <h2 id="mediciones-title">Mediciones y validación</h2>
+      <p class="section-lead">Los siguientes números provienen de sesiones de diagnóstico del prototipo, no de un benchmark formal de su versión definitiva.</p>
+      <div class="stat-grid" style="margin-top:0">
+        <div class="stat"><b>377–424</b><span>KiB/s observados en pruebas SMB anteriores</span></div>
+        <div class="stat"><b>4 KiB</b><span>Tamaño habitual de solicitud READ_ANDX en las trazas</span></div>
+        <div class="stat"><b>2.163</b><span>READ_ANDX en una sesión analizada</span></div>
+        <div class="stat"><b>16/16</b><span>Bloques finales coincidentes con la ISO original</span></div>
+      </div>
+      <div class="grid" style="margin-top:15px">
+        <article class="card"><h3>Marvel Ultimate Alliance</h3><p>ISO aproximada de 2.948.825.088 bytes; reconocimiento y ejecución conseguidos después de corregir la operación pendiente. Se inspeccionaron lecturas con offsets de 64 bits.</p><span class="badge">Arranque conseguido</span></article>
+        <article class="card"><h3>God of War</h3><p>Se llegó al menú en condiciones de prueba con alimentación externa. También se reprodujeron congelamientos bajo otras condiciones, por lo que no debe considerarse validada aún la estabilidad en todas las configuraciones.</p><span class="badge warn">Compatibilidad en investigación</span></article>
+      </div>
+      <p class="hint">Para comparar, se utilizó Samba en un PC Linux con la misma PS2 y una copia de la ISO. Esa prueba ayudó a distinguir el comportamiento del cliente OPL, pero no aísla por completo Ethernet, almacenamiento ni temporización.</p>
+    </section>
+
+    <section id="siguiente" aria-labelledby="siguiente-title">
+      <h2 id="siguiente-title">Fase 02 · ESP32-P4</h2>
+      <p class="section-lead">Se adquirió una nueva placa de desarrollo <strong>JC-ESP32P4-M3-DEV</strong> con ESP32-P4, ESP32-C6, Ethernet integrado y lector microSD, para explorar una arquitectura sin W5500 y evaluar posibles mejoras en el rendimiento.</p>
+      <div class="steps">
+        <div class="step"><span class="step-num">01</span><h3>Validar la placa</h3><p>Identificar revisión de hardware, PHY Ethernet, alimentación y conexión interna de microSD.</p></div>
+        <div class="step"><span class="step-num">02</span><h3>Portar las capas</h3><p>Sustituir Ethernet SPI/W5500 por EMAC/PHY integrado y adaptar la inicialización SDMMC.</p></div>
+        <div class="step"><span class="step-num">03</span><h3>Conservar SMB1</h3><p>Reutilizar la lógica que ya permite iniciar juegos, incluidas las correcciones de sesiones y operaciones pendientes.</p></div>
+        <div class="step"><span class="step-num">04</span><h3>Medir en igualdad</h3><p>Comparar lecturas SD, tiempos TCP, pausas, retransmisiones y comportamiento en los mismos juegos.</p></div>
+        <div class="step"><span class="step-num">05</span><h3>Evaluar caché</h3><p>Estudiar almacenamiento temporal en PSRAM y lectura anticipada solo si las métricas lo justifican.</p></div>
+        <div class="step"><span class="step-num">06</span><h3>Integración física</h3><p>Finalmente revisar dimensiones, consumo y montaje interno de la PS2 Slim.</p></div>
+      </div>
+      <div class="mini-note" style="margin-top:17px"><strong>Estado de esta etapa:</strong> placa adquirida; migración y mejoras de rendimiento aún no verificadas. El prototipo ESP32-S3 + W5500 se conserva como referencia funcional.</div>
+    </section>
+
+    <section id="repositorio" aria-labelledby="repositorio-title">
+      <h2 id="repositorio-title">Código y documentación</h2>
+      <p class="section-lead">El repositorio reúne el firmware de la primera fase. La configuración pública consultada utiliza PlatformIO <code>espressif32 @ 7.0.1</code>, placa <code>esp32-s3-devkitc-1</code>, framework <code>espidf</code> y monitor serial a <code>115200</code> baudios.</p>
+      <pre><code>SMB_ESP32/
+├── components/fatfs/
+├── include/
+├── lib/
+├── src/
+├── test/
+├── CMakeLists.txt
+└── platformio.ini</code></pre>
+      <p class="hint">Estructura de primer nivel consultada en GitHub. La bitácora combina datos del repositorio, archivos de código de diagnóstico revisados durante el desarrollo y pruebas realizadas sobre la consola; algunos cambios más recientes podrían no estar reflejados en la rama pública.</p>
+      <div class="hero-cta" style="margin-top:20px"><a class="action primary" href="https://github.com/Daniel-code666/SMB_ESP32" target="_blank" rel="noopener noreferrer">↗ Explorar SMB_ESP32</a><a class="action secondary" href="#inicio">↑ Volver al inicio</a></div>
+    </section>
+  </main>
+
+  <footer class="shell foot">
+    <span>SMB_ESP32 · Registro de desarrollo · Primera fase (2026)</span>
+    <span>Proyecto experimental e independiente; sin afiliación con Sony, Espressif ni los editores de los juegos.</span>
+  </footer>
+</body>
+</html>
